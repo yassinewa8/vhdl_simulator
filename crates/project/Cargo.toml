@@ -1,0 +1,13 @@
+[package]
+name = "project"
+description = "Project file loading/saving and build orchestration"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+studio-core.workspace = true
+nvc.workspace = true
+
+[lints]
+workspace = true

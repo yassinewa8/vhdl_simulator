@@ -1,0 +1,37 @@
+# Workspace root. This file doesn't build anything itself; it lists the
+# crates (sub-projects) and holds settings and dependency versions they share.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/nvc",
+    "crates/project",
+    "crates/wave",
+    "crates/app",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Licence for our own code: not decided yet (see docs/PLAN.md, Decisions).
+publish = false
+
+# Shared dependency versions. A crate opts in with `name.workspace = true`.
+# Every entry here has had its licence checked (see CLAUDE.md).
+[workspace.dependencies]
+# Our own crates
+studio-core = { path = "crates/core" }
+nvc = { path = "crates/nvc" }
+project = { path = "crates/project" }
+wave = { path = "crates/wave" }
+
+# Third-party (licence in comment)
+eframe = "0.36" # MIT OR Apache-2.0
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

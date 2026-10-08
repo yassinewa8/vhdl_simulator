@@ -1,0 +1,15 @@
+# Rust build output
+/target/
+
+# NVC output when running test designs locally
+work/
+*.fst
+*.vcd
+*.ghw
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

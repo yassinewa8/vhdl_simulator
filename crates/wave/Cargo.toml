@@ -1,0 +1,12 @@
+[package]
+name = "wave"
+description = "Waveform loading and querying (no GUI code)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+studio-core.workspace = true
+
+[lints]
+workspace = true

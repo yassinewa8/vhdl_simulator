@@ -1,0 +1,13 @@
+[package]
+name = "app"
+description = "Desktop GUI (eframe/egui). The only crate allowed to contain GUI code."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+studio-core.workspace = true
+eframe.workspace = true
+
+[lints]
+workspace = true
