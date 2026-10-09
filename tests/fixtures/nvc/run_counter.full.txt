@@ -1,0 +1,2 @@
+** Note: 120ns+0: count = 10
+   Process :counter_tb:stimulus at tests/vhdl/counter.vhd:51

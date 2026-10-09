@@ -1,0 +1,5 @@
+** Error: no visible declaration for B
+    > tests/vhdl/broken/undeclared.vhd:11
+    |
+ 11 |     a <= b;
+    |          ^ did you mean A?

@@ -1,0 +1,6 @@
+tests/vhdl/sim/messages_tb.vhd:10:9: note: 0ms+0: a note message
+tests/vhdl/sim/messages_tb.vhd:12:9: warning: 10ns+0: a warning message
+tests/vhdl/sim/messages_tb.vhd:14:9: error: 15ns+0: an error message
+tests/vhdl/sim/messages_tb.vhd:16:16: error: 15001ps+0: assertion with message
+tests/vhdl/sim/messages_tb.vhd:17:16: error: 15001ps+0: Assertion violation.
+tests/vhdl/sim/messages_tb.vhd:19:9: failure: 3015001ps+0: a failure message

@@ -1,0 +1,15 @@
+** Note: 0ms+0: a note message
+   Process :messages_tb:_p0 at tests/vhdl/sim/messages_tb.vhd:8
+** Warning: 10ns+0: a warning message
+   Process :messages_tb:_p0 at tests/vhdl/sim/messages_tb.vhd:8
+** Error: 15ns+0: an error message
+   Process :messages_tb:_p0 at tests/vhdl/sim/messages_tb.vhd:8
+** Error: 15001ps+0: assertion with message
+   Process :messages_tb:_p0 at tests/vhdl/sim/messages_tb.vhd:8
+** Error: 15001ps+0: Assertion violation.
+    > tests/vhdl/sim/messages_tb.vhd:17
+    |
+ 17 |         assert false;
+    |                ^^^^^
+** Failure: 3015001ps+0: a failure message
+   Process :messages_tb:_p0 at tests/vhdl/sim/messages_tb.vhd:8

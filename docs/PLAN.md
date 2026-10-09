@@ -36,3 +36,19 @@ Append new decisions at the bottom: date, what was decided, and why.
   renderer (glow) is the fallback if wgpu misbehaves on some machine.
 - **2026-10-08: Rust edition 2024, toolchain pinned in
   `rust-toolchain.toml`** so local builds and CI use the same compiler.
+- **2026-10-09: NVC message styles: full for analyse/elaborate, compact for
+  run.** Full style keeps hints like "did you mean A?"; compact style points
+  report/assert messages at the actual statement line rather than the
+  process. Details in `docs/nvc-cli-notes.md`.
+- **2026-10-09: Minimum NVC version 1.23.0**, the only version whose output
+  format has been checked. Older versions get a clear "please upgrade" error.
+- **2026-10-09: Each nvc step runs as its own process** (not one chained
+  `-a ... -e ... -r` call), so each has its own exit code, timing and parser.
+- **2026-10-09: `clap` for command-line parsing** (MIT OR Apache-2.0). Pays
+  off when `cli build`, `cli test` and `cli do` arrive in Phase 6.
+- **2026-10-09: CI installs real NVC** (from its GitHub releases) on Linux
+  and Windows. End-to-end tests skip locally when nvc is missing, but fail
+  in CI (`NVC_REQUIRED=1`) so they can't be skipped by accident.
+- **2026-10-09: Parser fixtures are real captured output** in
+  `tests/fixtures/nvc/`, regenerated with `scripts/capture-nvc-fixtures.sh`
+  after an NVC upgrade; `git diff` then shows any format change.

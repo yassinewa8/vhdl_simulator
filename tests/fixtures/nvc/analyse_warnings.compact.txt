@@ -1,0 +1,2 @@
+tests/vhdl/broken/warnings.vhd:11:21: warning: shared variable SV must have protected type
+tests/vhdl/broken/warnings.vhd:15:20: warning: signal B is read in the process but is not in the sensitivity list

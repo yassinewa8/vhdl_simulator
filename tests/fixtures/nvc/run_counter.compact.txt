@@ -1,0 +1,1 @@
+tests/vhdl/counter.vhd:56:9: note: 120ns+0: count = 10

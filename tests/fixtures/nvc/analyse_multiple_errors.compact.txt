@@ -1,0 +1,2 @@
+tests/vhdl/broken/multiple_errors.vhd:12:10: error: no visible declaration for MISSING_ONE
+tests/vhdl/broken/multiple_errors.vhd:13:10: error: no visible declaration for MISSING_TWO

@@ -11,4 +11,13 @@ What belongs here:
 - Multi-file designs for testing compile order
 - One large generated testbench for performance (millions of transitions)
 
-Start with `counter.vhd`, a counter with a self-stopping testbench.
+Current contents:
+
+- `counter.vhd`: a counter with a self-stopping testbench (`counter_tb`)
+- `broken/`: files that fail analysis (or warn, in `warnings.vhd`), one
+  kind of error each
+- `sim/messages_tb.vhd`: a report at every severity, then failed asserts
+- `sim/endless_tb.vhd`: never stops by itself; used to test Stop/cancel
+
+After adding a design whose NVC output a parser test should check, add it
+to `scripts/capture-nvc-fixtures.sh` and re-run the script.

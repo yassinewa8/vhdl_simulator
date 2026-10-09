@@ -1,0 +1,13 @@
+** Warning: shared variable SV must have protected type
+    > tests/vhdl/broken/warnings.vhd:11
+    |
+ 11 |     shared variable sv : integer;
+    |                     ^^
+** Warning: signal B is read in the process but is not in the sensitivity list
+    > tests/vhdl/broken/warnings.vhd:15
+    |
+ 13 |     process (a)
+    |     ^ missing from sensitivity list
+ 14 |     begin
+ 15 |         y <= a and b;
+    |                    ^ read here

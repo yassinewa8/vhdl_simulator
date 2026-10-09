@@ -1,0 +1,1 @@
+tests/vhdl/broken/syntax_error.vhd:10:1: error: unexpected begin while parsing signal declaration, expecting one of := or ;

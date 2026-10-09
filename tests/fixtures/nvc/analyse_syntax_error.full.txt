@@ -1,0 +1,5 @@
+** Error: unexpected begin while parsing signal declaration, expecting one of := or ;
+    > tests/vhdl/broken/syntax_error.vhd:10
+    |
+ 10 | begin
+    | ^^^^^ this token was unexpected

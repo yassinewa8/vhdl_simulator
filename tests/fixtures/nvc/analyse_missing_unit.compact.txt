@@ -1,0 +1,1 @@
+tests/vhdl/broken/missing_unit.vhd:7:5: error: design unit DOES_NOT_EXIST not found in library WORK

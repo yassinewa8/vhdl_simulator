@@ -1,0 +1,5 @@
+** Error: design unit DOES_NOT_EXIST not found in library WORK
+   > tests/vhdl/broken/missing_unit.vhd:7
+   |
+ 7 |     u0 : entity work.does_not_exist;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

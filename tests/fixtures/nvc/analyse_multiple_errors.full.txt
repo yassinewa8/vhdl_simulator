@@ -1,0 +1,10 @@
+** Error: no visible declaration for MISSING_ONE
+    > tests/vhdl/broken/multiple_errors.vhd:12
+    |
+ 12 |     a <= missing_one;
+    |          ^^^^^^^^^^^
+** Error: no visible declaration for MISSING_TWO
+    > tests/vhdl/broken/multiple_errors.vhd:13
+    |
+ 13 |     n <= missing_two;
+    |          ^^^^^^^^^^^

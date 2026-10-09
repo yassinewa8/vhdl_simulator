@@ -1,0 +1,1 @@
+tests/vhdl/broken/undeclared.vhd:11:10: error: no visible declaration for B

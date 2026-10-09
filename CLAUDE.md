@@ -48,7 +48,10 @@ agreed decisions in the "Decisions" section of `docs/PLAN.md`.
 Shared dependency versions go in `[workspace.dependencies]` in the root
 `Cargo.toml`; crates refer to them with `name.workspace = true`.
 
-Small VHDL test designs live in `tests/vhdl/`.
+Small VHDL test designs live in `tests/vhdl/`. Real NVC output used by the
+parser tests lives in `tests/fixtures/nvc/`; regenerate it with
+`bash scripts/capture-nvc-fixtures.sh` (never hand-edit fixtures). What NVC's
+command line and output look like is recorded in `docs/nvc-cli-notes.md`.
 
 ## Notes
 

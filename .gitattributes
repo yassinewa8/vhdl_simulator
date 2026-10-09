@@ -1,0 +1,6 @@
+# Captured NVC output: store byte-for-byte (including Windows line endings)
+# so parser tests see exactly what NVC printed.
+tests/fixtures/** -text
+
+# Shell scripts must keep Unix line endings to run on Linux.
+*.sh text eol=lf

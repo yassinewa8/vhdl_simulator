@@ -1,5 +1,6 @@
 # Runs build, test and clippy on every push and pull request,
-# on both Linux and Windows.
+# on both Linux and Windows, with a real NVC installed for the
+# end-to-end tests.
 
 name: CI
 
@@ -9,6 +10,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Must match nvc::MINIMUM_VERSION (and the fixtures in tests/fixtures/nvc).
+  NVC_VERSION: 1.23.0
 
 jobs:
   check:
@@ -17,7 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Ubuntu version pinned because NVC's .deb is built per Ubuntu release.
+        os: [ubuntu-24.04, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +34,24 @@ jobs:
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev \
             libxcb-xfixes0-dev libxkbcommon-dev libgl1-mesa-dev
 
+      - name: Install NVC (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL -o nvc.deb \
+            "https://github.com/nickg/nvc/releases/download/r${NVC_VERSION}/nvc_${NVC_VERSION}-1_amd64_ubuntu-24.04.deb"
+          sudo apt-get install -y ./nvc.deb
+          nvc --version
+
+      - name: Install NVC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/nickg/nvc/releases/download/r$env:NVC_VERSION/nvc-$env:NVC_VERSION.msi"
+          Invoke-WebRequest -Uri $url -OutFile nvc.msi
+          Start-Process msiexec.exe -ArgumentList '/i', 'nvc.msi', '/quiet', '/norestart' -Wait
+          "C:\Program Files\NVC\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & "C:\Program Files\NVC\bin\nvc.exe" --version
+
       # Installs the Rust version pinned in rust-toolchain.toml.
       - name: Install Rust
         run: rustup show
@@ -39,8 +61,11 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets
 
+      # NVC_REQUIRED makes the end-to-end tests fail (not skip) without nvc.
       - name: Test
         run: cargo test --workspace
+        env:
+          NVC_REQUIRED: "1"
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

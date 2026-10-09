@@ -1,0 +1,5 @@
+** Fatal: (init): value 0 outside of POSITIVE range 1 to 2147483647 for generic WIDTH
+   > tests/vhdl/counter.vhd:8
+   |
+ 8 |     generic (WIDTH : positive := 8);
+   |              ^^^^^

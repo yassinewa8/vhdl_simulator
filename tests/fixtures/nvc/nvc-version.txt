@@ -1,0 +1,1 @@
+nvc 1.23.0 (1.23.0.r0.gcba10a2e0) (Using LLVM 22.1.8)

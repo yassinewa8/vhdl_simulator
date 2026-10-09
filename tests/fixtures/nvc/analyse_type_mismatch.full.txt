@@ -1,0 +1,5 @@
+** Error: type of value universal_integer does not match type of target STD_LOGIC_VECTOR
+    > tests/vhdl/broken/type_mismatch.vhd:11
+    |
+ 11 |     v <= 5;
+    |          ^
