@@ -12,6 +12,7 @@ mod session;
 mod state;
 mod timeline;
 mod wave_state;
+mod wave_style;
 mod wave_ui;
 mod ui;
 mod worker;

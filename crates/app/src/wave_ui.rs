@@ -8,13 +8,14 @@
 
 use std::time::Instant;
 
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use studio_core::{Logic, Value, format_value};
+use eframe::egui::{self, Align2, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use studio_core::{Radix, Value, format_value};
 use wave::{Bucket, ScopeId, ScopeKind, SignalId, SignalKind, Waveform};
 
 use crate::state::AppState;
 use crate::timeline::Timeline;
 use crate::wave_state::{DisplayedSignal, WaveState};
+use crate::wave_style::{Level, Look, Palette, Style, level_of, style_of};
 
 /// Width of the signal names column.
 const NAMES_WIDTH: f32 = 180.0;
@@ -333,15 +334,6 @@ fn draw_ruler(painter: &egui::Painter, visuals: &egui::Visuals, timeline: &Timel
     }
 }
 
-/// Wave colour: green, as on most simulators' wave windows.
-fn wave_colour(visuals: &egui::Visuals) -> Color32 {
-    if visuals.dark_mode {
-        Color32::from_rgb(0x4c, 0xd9, 0x64)
-    } else {
-        Color32::from_rgb(0x1a, 0x8a, 0x2e)
-    }
-}
-
 /// Draws one signal across `row` (the wave part of its row).
 fn draw_signal(
     painter: &egui::Painter,
@@ -364,8 +356,7 @@ fn draw_signal(
 
     let shape = Shape {
         painter,
-        stroke: Stroke::new(1.5, wave_colour(visuals)),
-        text_colour: visuals.strong_text_color(),
+        palette: Palette::for_theme(visuals.dark_mode),
         top: row.top() + ROW_PADDING,
         bottom: row.bottom() - ROW_PADDING,
         signal,
@@ -386,7 +377,7 @@ fn draw_signal(
             }
             Bucket::Many { last_value, .. } => {
                 shape.segment(current.as_ref(), segment_start, column_x);
-                shape.busy_column(column_x);
+                shape.busy_column(column_x, &last_value);
                 current = Some(last_value);
                 segment_start = column_x + 1.0;
             }
@@ -395,11 +386,15 @@ fn draw_signal(
     shape.segment(current.as_ref(), segment_start, x_end.min(row.right()));
 }
 
+/// Line width of the waves.
+const WAVE_WIDTH: f32 = 1.5;
+/// How strongly unknown values fill their area (0 = not at all, 1 = solid).
+const UNKNOWN_FILL: f32 = 0.3;
+
 /// Draws the pieces of one signal's wave.
 struct Shape<'a> {
     painter: &'a egui::Painter,
-    stroke: Stroke,
-    text_colour: Color32,
+    palette: Palette,
     top: f32,
     bottom: f32,
     signal: &'a DisplayedSignal,
@@ -410,12 +405,17 @@ impl Shape<'_> {
         (self.top + self.bottom) / 2.0
     }
 
-    /// The y coordinate a one-bit value is drawn at.
-    fn bit_level(&self, value: &Value) -> f32 {
+    fn stroke(&self, look: Look) -> Stroke {
+        Stroke::new(WAVE_WIDTH, self.palette.colour(look))
+    }
+
+    /// The lowest and highest y a one-bit value covers.
+    fn bit_extent(&self, value: &Value) -> (f32, f32) {
         match level_of(value) {
-            Level::High => self.top,
-            Level::Low => self.bottom,
-            Level::Middle => self.middle(),
+            Level::High => (self.top, self.top),
+            Level::Low => (self.bottom, self.bottom),
+            Level::Middle => (self.middle(), self.middle()),
+            Level::Block => (self.top, self.bottom),
         }
     }
 
@@ -425,69 +425,113 @@ impl Shape<'_> {
         if x1 <= x0 {
             return;
         }
+        let style = style_of(value);
         if self.signal.is_bit {
-            let y = self.bit_level(value);
-            self.painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], self.stroke);
-            return;
-        }
-        // A bus: two lines, slightly inset so transitions show as an X.
-        let (a, b) = (x0 + 2.0, x1 - 2.0);
-        if b > a {
-            self.painter.line_segment([Pos2::new(a, self.top), Pos2::new(b, self.top)], self.stroke);
-            self.painter.line_segment([Pos2::new(a, self.bottom), Pos2::new(b, self.bottom)], self.stroke);
-        }
-        self.value_text(value, x0, x1);
-    }
-
-    /// The value printed in a bus segment, if there's room for it.
-    fn value_text(&self, value: &Value, x0: f32, x1: f32) {
-        let room = x1 - x0 - 8.0;
-        if room < 12.0 {
-            return;
-        }
-        let galley = self.painter.layout_no_wrap(format_value(value, self.signal.radix), FontId::monospace(12.0), self.text_colour);
-        if galley.size().x <= room {
-            let pos = Pos2::new((x0 + x1 - galley.size().x) / 2.0, self.middle() - galley.size().y / 2.0);
-            self.painter.galley(pos, galley, self.text_colour);
-        }
-    }
-
-    /// A change at `x`.
-    fn transition(&self, old: Option<&Value>, new: &Value, x: f32) {
-        if self.signal.is_bit {
-            let from = old.map_or(self.bit_level(new), |old| self.bit_level(old));
-            self.painter.line_segment([Pos2::new(x, from), Pos2::new(x, self.bit_level(new))], self.stroke);
+            self.bit_segment(value, style.look, x0, x1);
         } else {
-            self.painter.line_segment([Pos2::new(x - 2.0, self.top), Pos2::new(x + 2.0, self.bottom)], self.stroke);
-            self.painter.line_segment([Pos2::new(x - 2.0, self.bottom), Pos2::new(x + 2.0, self.top)], self.stroke);
+            self.bus_segment(value, style, x0, x1);
         }
     }
 
-    /// A pixel column with many changes: drawn solid ("lots going on").
-    fn busy_column(&self, x: f32) {
-        self.painter.line_segment([Pos2::new(x + 0.5, self.top), Pos2::new(x + 0.5, self.bottom)], self.stroke);
+    fn bit_segment(&self, value: &Value, look: Look, x0: f32, x1: f32) {
+        let stroke = self.stroke(look);
+        match level_of(value) {
+            Level::Block => self.block(look, x0, x1),
+            level => {
+                let y = self.bit_extent(value).0;
+                let line = [Pos2::new(x0, y), Pos2::new(x1, y)];
+                if look == Look::Weak && level != Level::Middle {
+                    // L and H: dashed, so a pull-up looks different from a drive.
+                    self.painter.extend(egui::Shape::dashed_line(&line, stroke, 4.0, 3.0));
+                } else {
+                    self.painter.line_segment(line, stroke);
+                }
+            }
+        }
+    }
+
+    /// A filled box between the top and bottom: how X, U, W and '-' look.
+    fn block(&self, look: Look, x0: f32, x1: f32) {
+        let colour = self.palette.colour(look);
+        let area = Rect::from_min_max(Pos2::new(x0, self.top), Pos2::new(x1, self.bottom));
+        self.painter.rect_filled(area, 0.0, colour.gamma_multiply(UNKNOWN_FILL));
+        let stroke = self.stroke(look);
+        self.painter.line_segment([area.left_top(), area.right_top()], stroke);
+        self.painter.line_segment([area.left_bottom(), area.right_bottom()], stroke);
+    }
+
+    fn bus_segment(&self, value: &Value, style: Style, x0: f32, x1: f32) {
+        if style.all_high_z {
+            // A released bus: a mid-level line, like a single Z.
+            let y = self.middle();
+            self.painter.line_segment([Pos2::new(x0, y), Pos2::new(x1, y)], self.stroke(Look::HighZ));
+        } else {
+            // Two lines, inset so transitions show as a cross; tinted when
+            // the value has unknown bits.
+            let (a, b) = (x0 + 2.0, x1 - 2.0);
+            if b > a {
+                if style.look.is_block() {
+                    let area = Rect::from_min_max(Pos2::new(a, self.top), Pos2::new(b, self.bottom));
+                    self.painter.rect_filled(area, 0.0, self.palette.colour(style.look).gamma_multiply(UNKNOWN_FILL));
+                }
+                let stroke = self.stroke(style.look);
+                self.painter.line_segment([Pos2::new(a, self.top), Pos2::new(b, self.top)], stroke);
+                self.painter.line_segment([Pos2::new(a, self.bottom), Pos2::new(b, self.bottom)], stroke);
+            }
+        }
+        self.value_text(value, style.look, x0, x1);
+    }
+
+    /// The value printed in a bus segment, if there's room for all of it.
+    fn value_text(&self, value: &Value, look: Look, x0: f32, x1: f32) {
+        let room = x1 - x0 - 8.0;
+        if room < 8.0 {
+            return;
+        }
+        let colour = self.palette.text_colour(look);
+        for text in texts_to_try(value, self.signal.radix) {
+            let galley = self.painter.layout_no_wrap(text, FontId::monospace(12.0), colour);
+            if galley.size().x <= room {
+                let pos = Pos2::new((x0 + x1 - galley.size().x) / 2.0, self.middle() - galley.size().y / 2.0);
+                self.painter.galley(pos, galley, colour);
+                return;
+            }
+        }
+    }
+
+    /// A change at `x`, in the colour of the new value.
+    fn transition(&self, old: Option<&Value>, new: &Value, x: f32) {
+        let stroke = self.stroke(style_of(new).look);
+        if self.signal.is_bit {
+            // A vertical line covering both the old and the new level.
+            let (new_top, new_bottom) = self.bit_extent(new);
+            let (old_top, old_bottom) = old.map_or((new_top, new_bottom), |old| self.bit_extent(old));
+            let (from, to) = (new_top.min(old_top), new_bottom.max(old_bottom));
+            self.painter.line_segment([Pos2::new(x, from), Pos2::new(x, to)], stroke);
+        } else {
+            self.painter.line_segment([Pos2::new(x - 2.0, self.top), Pos2::new(x + 2.0, self.bottom)], stroke);
+            self.painter.line_segment([Pos2::new(x - 2.0, self.bottom), Pos2::new(x + 2.0, self.top)], stroke);
+        }
+    }
+
+    /// A pixel column with many changes: drawn solid ("lots going on"),
+    /// in the colour of the value it ends on.
+    fn busy_column(&self, x: f32, last_value: &Value) {
+        let stroke = self.stroke(style_of(last_value).look);
+        self.painter.line_segment([Pos2::new(x + 0.5, self.top), Pos2::new(x + 0.5, self.bottom)], stroke);
     }
 }
 
-/// Where a one-bit wave is drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Level {
-    High,
-    Low,
-    /// Half-way: Z, X, U, W and '-' (colours per value come in step 2).
-    Middle,
-}
-
-/// 1 and H are drawn high, 0 and L low (weak values like strong ones, as
-/// numeric_std treats them), anything else in the middle.
-fn level_of(value: &Value) -> Level {
-    match value {
-        Value::Logic(bits) => match bits.first().and_then(|bit: &Logic| bit.to_bit()) {
-            Some(true) => Level::High,
-            Some(false) => Level::Low,
-            None => Level::Middle,
-        },
-        _ => Level::Middle,
+/// The texts to try printing for a bus value, best first. Hex or decimal
+/// can only show `?` for a digit that mixes unknown and known bits, which
+/// hides which bits are bad, so then the bits themselves are tried first
+/// (`01XZWLH-` rather than `??`), falling back to the chosen radix.
+fn texts_to_try(value: &Value, radix: Radix) -> Vec<String> {
+    let chosen = format_value(value, radix);
+    if chosen.contains('?') && radix != Radix::Binary {
+        vec![format_value(value, Radix::Binary), chosen]
+    } else {
+        vec![chosen]
     }
 }
 
@@ -496,16 +540,15 @@ mod tests {
     use super::*;
     use studio_core::parse_logic_vector;
 
+    fn logic(text: &str) -> Value {
+        Value::Logic(parse_logic_vector(text).unwrap())
+    }
+
     #[test]
-    fn bit_levels() {
-        let value = |text: &str| Value::Logic(parse_logic_vector(text).unwrap());
-        assert_eq!(level_of(&value("1")), Level::High);
-        assert_eq!(level_of(&value("H")), Level::High);
-        assert_eq!(level_of(&value("0")), Level::Low);
-        assert_eq!(level_of(&value("L")), Level::Low);
-        for unknown in ["U", "X", "Z", "W", "-"] {
-            assert_eq!(level_of(&value(unknown)), Level::Middle, "{unknown}");
-        }
-        assert_eq!(level_of(&Value::Text("idle".to_string())), Level::Middle);
+    fn unclear_digits_show_the_bits_instead() {
+        assert_eq!(texts_to_try(&logic("01XZWLH-"), Radix::Hex), ["01XZWLH-", "??"]);
+        assert_eq!(texts_to_try(&logic("XXXX0101"), Radix::Hex), ["X5"], "a whole-digit X is clear enough");
+        assert_eq!(texts_to_try(&logic("10100101"), Radix::Hex), ["A5"]);
+        assert_eq!(texts_to_try(&logic("01X1"), Radix::Unsigned), ["01X1", "?"]);
     }
 }
