@@ -7,7 +7,10 @@
 //!
 //! Needs bash, git and tclsh with Tcllib (see `nvc::install_package`).
 
-use nvc::{CancelToken, default_library_dir, default_tcllib_dir, find_bash, install_package, installed_libraries, locate_nvc};
+use nvc::{
+    CancelToken, InstallOptions, default_library_dir, default_tcllib_dir, find_bash, install_package, installed_libraries,
+    locate_nvc,
+};
 
 #[test]
 #[ignore = "downloads and compiles OSVVM; run with --ignored"]
@@ -20,7 +23,10 @@ fn installs_osvvm() {
         &install,
         &bash,
         "osvvm",
-        default_tcllib_dir().as_deref(),
+        &InstallOptions {
+            tcllib_dir: default_tcllib_dir(),
+            ..InstallOptions::default()
+        },
         &CancelToken::new(),
         &mut |line| lines.push(line.to_string()),
     )

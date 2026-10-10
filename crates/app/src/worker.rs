@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nvc::{CancelToken, InstallError, NvcInstall, default_tcllib_dir, find_bash, install_package};
+use nvc::{CancelToken, InstallError, InstallOptions, NvcInstall, default_tcllib_dir, find_bash, install_package};
 use project::{BuildEvent, BuildPlan, Project, TestbenchConfig, plan_build, run_build, run_testbench};
 
 /// Something the worker can do.
@@ -23,8 +23,12 @@ pub enum Job {
     Build { force: bool },
     /// Build, then elaborate and run a testbench.
     Run { testbench: TestbenchConfig },
-    /// Install a library package such as `osvvm`.
-    Install { package: String },
+    /// Install a library package such as `osvvm`. `quartus_root` is the
+    /// Quartus folder, for the `quartus` package only.
+    Install {
+        package: String,
+        quartus_root: Option<PathBuf>,
+    },
 }
 
 impl Job {
@@ -34,7 +38,7 @@ impl Job {
             Job::Build { force: false } => "Build".to_string(),
             Job::Build { force: true } => "Rebuild all".to_string(),
             Job::Run { testbench } => format!("Run {}", testbench.display_name()),
-            Job::Install { package } => format!("Install {package}"),
+            Job::Install { package, .. } => format!("Install {package}"),
         }
     }
 }
@@ -84,7 +88,7 @@ pub struct JobContext {
 /// message sent is always [`WorkerMessage::Finished`].
 pub fn run_job(job: &Job, context: &JobContext, cancel: &CancelToken, send: &mut dyn FnMut(WorkerMessage)) {
     let outcome = match job {
-        Job::Install { package } => install(package, &context.nvc, cancel, send),
+        Job::Install { package, quartus_root } => install(package, quartus_root, &context.nvc, cancel, send),
         Job::Build { force } => match &context.project {
             Some(project) => build(project, &context.nvc, *force, cancel, send).0,
             None => JobOutcome::failed("No project is open"),
@@ -166,13 +170,25 @@ fn build_and_run(
     }
 }
 
-fn install(package: &str, nvc: &NvcInstall, cancel: &CancelToken, send: &mut dyn FnMut(WorkerMessage)) -> JobOutcome {
+fn install(
+    package: &str,
+    quartus_root: &Option<PathBuf>,
+    nvc: &NvcInstall,
+    cancel: &CancelToken,
+    send: &mut dyn FnMut(WorkerMessage),
+) -> JobOutcome {
     let Some(bash) = find_bash() else {
         return JobOutcome::failed(InstallError::NoBash.to_string());
     };
     send(WorkerMessage::Line(format!("Using {}", bash.program.display())));
-    let tcllib = default_tcllib_dir();
-    let result = install_package(nvc, &bash, package, tcllib.as_deref(), cancel, &mut |line| {
+    if let Some(root) = quartus_root {
+        send(WorkerMessage::Line(format!("Quartus: {}", root.display())));
+    }
+    let options = InstallOptions {
+        tcllib_dir: default_tcllib_dir(),
+        quartus_root: quartus_root.clone(),
+    };
+    let result = install_package(nvc, &bash, package, &options, cancel, &mut |line| {
         send(WorkerMessage::Line(line.to_string()))
     });
     match result {
@@ -276,6 +292,7 @@ mod tests {
         assert_eq!(Job::Run { testbench }.description(), "Run top_tb");
         let install = Job::Install {
             package: "osvvm".to_string(),
+            quartus_root: None,
         };
         assert_eq!(install.description(), "Install osvvm");
     }

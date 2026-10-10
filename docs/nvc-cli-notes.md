@@ -102,6 +102,27 @@ Checked 2026-10-10 with OSVVM 2025.06a on Windows 11.
   (`failed to open OsvvmTemp_NVC/OsvvmRun.yml`); use `ReportAlerts`.
   OSVVM's report lines go to **stdout**.
 
+### Quartus (Intel/Altera vendor libraries)
+
+Read from `install-quartus.sh` (nvc 1.23.0) on 2026-10-10; no Quartus on
+the development PC, so only tested with a fake folder.
+
+- Downloads nothing: compiles the simulation sources of an installed
+  Quartus, found through the `QUARTUS_ROOTDIR` environment variable (the
+  `quartus` folder, e.g. `C:\intelFPGA_lite\23.1std\quartus`). Under
+  Windows bash the script converts it with `cygpath`, so `C:/...` works.
+- Sources: `$QUARTUS_ROOTDIR/eda/sim_lib` (older versions) or
+  `$QUARTUS_ROOTDIR/questa_fse/intel/vhdl/src/altera` (22.1+). Neither →
+  the script stops.
+- Compiles for 1993 and 2008 (override with `NVC_STD`), into `altera`,
+  `altera_mf`, `lpm`, `sgate`, `altera_lnsim`, device families
+  (`cyclonev`, `cycloneive`, `cyclone10lp`, `maxv`, `arriaii`, …), with
+  `.08` suffixes for 2008. Uses `-M 128m --relaxed`.
+- **A Quartus path with spaces breaks it**: `--relative=$QUARTUS_ROOTDIR`
+  and the file names are passed to nvc unquoted, so bash splits them
+  (`** Fatal: opening quartus/23.1std/quartus`). We refuse such paths
+  before starting, with an explanation.
+
 ## Useful options
 
 | Step | Option | Meaning |

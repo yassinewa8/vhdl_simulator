@@ -174,9 +174,12 @@ impl StudioApp {
                 ui.close();
                 self.state.start_job(Job::Install {
                     package: package.to_string(),
+                    quartus_root: None,
                 });
             }
         }
+        ui.separator();
+        self.quartus_items(ui);
         ui.separator();
         ui.menu_button(format!("Installed ({})", self.state.installed.len()), |ui| {
             if self.state.installed.is_empty() {
@@ -186,6 +189,39 @@ impl StudioApp {
                 ui.label(library);
             }
         });
+    }
+
+    /// Intel/Altera Quartus vendor libraries. Nothing is downloaded: nvc's
+    /// script compiles the simulation sources of an installed Quartus, so
+    /// we need its folder, found automatically or chosen by the user.
+    fn quartus_items(&mut self, ui: &mut egui::Ui) {
+        let idle = !self.state.is_busy();
+        let mut chosen = None;
+        if ui
+            .add_enabled(idle, egui::Button::new("Install Intel Quartus libraries"))
+            .on_hover_text(
+                "Compiles altera_mf, lpm, cyclonev etc. from your Quartus installation into ~/.nvc/lib. \
+                 Quartus is found by itself, or you're asked for its folder. Takes several minutes.",
+            )
+            .clicked()
+        {
+            ui.close();
+            chosen = nvc::find_quartus().or_else(pick_quartus_folder);
+        }
+        if ui
+            .add_enabled(idle, egui::Button::new("Install Quartus libraries from folder…"))
+            .on_hover_text("The same, choosing which Quartus installation to use")
+            .clicked()
+        {
+            ui.close();
+            chosen = pick_quartus_folder();
+        }
+        if let Some(quartus_root) = chosen {
+            self.state.start_job(Job::Install {
+                package: "quartus".to_string(),
+                quartus_root: Some(quartus_root),
+            });
+        }
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -510,4 +546,14 @@ fn success_colour(ui: &egui::Ui) -> Color32 {
     } else {
         Color32::from_rgb(0x1b, 0x7f, 0x2a)
     }
+}
+
+/// Asks the user for their Quartus folder. Either the `quartus` folder or
+/// the one above it (e.g. `C:\\intelFPGA_lite\\23.1std`) will do; a folder
+/// that's neither is passed on as it is, so the install explains the problem.
+fn pick_quartus_folder() -> Option<PathBuf> {
+    let picked = rfd::FileDialog::new()
+        .set_title("Quartus installation folder (e.g. C:\\intelFPGA_lite\\23.1std)")
+        .pick_folder()?;
+    Some(nvc::quartus_root_from(&picked).unwrap_or(picked))
 }

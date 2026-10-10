@@ -61,7 +61,7 @@ testable without a GUI. NVC is GPL: only ever run it as a process.
 | `diagnostics.rs` / `sim_messages.rs` | Parsers: "full" style (analyse/elaborate) and "compact" style (run). |
 | `steps.rs` | `Nvc::{analyse, elaborate, run}` → `StepReport`. |
 | `format.rs` | Parsed output → text (CLI and GUI log). |
-| `install.rs` | OSVVM/UVVM install by running nvc's own `libexec/nvc/install-*.sh` with bash (see gotchas). |
+| `install.rs` | OSVVM/UVVM/Quartus install by running nvc's own `libexec/nvc/install-*.sh` with bash (see gotchas); `InstallOptions` (Tcllib, Quartus folder), `find_quartus`. |
 
 ### project (`crates/project`)
 | File | Holds |
@@ -189,7 +189,9 @@ cargo clippy --workspace --all-targets -- -D warnings
   ourselves (Git for Windows' `bin\bash.exe` launcher, or MSYS2), set
   `NVC`, `TCLLIBPATH` (Tcllib for OSVVM, kept in
   `~/.cache/nvc-studio/tcllib`), and `core.autocrlf=false` via
-  `GIT_CONFIG_*` (UVVM's scripts break on CRLF file names).
+  `GIT_CONFIG_*` (UVVM's scripts break on CRLF file names), and
+  `QUARTUS_ROOTDIR` for Quartus (whose script splits paths at spaces, so
+  those are refused up front).
 - nvc writes the source path unquoted into waveforms: a space in it makes
   the **VCD** unreadable (FST is fine). OSVVM's `SetSaveWaves` also breaks
   on spaces in the output path.

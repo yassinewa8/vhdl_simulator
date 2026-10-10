@@ -45,8 +45,8 @@ mod steps;
 pub use diagnostics::{DiagnosticParser, parse_full_output};
 pub use format::format_item;
 pub use install::{
-    Bash, InstallError, default_library_dir, default_tcllib_dir, find_bash, install_package,
-    installable_packages, installed_libraries, libexec_dir,
+    Bash, InstallError, InstallOptions, default_library_dir, default_tcllib_dir, find_bash, find_quartus,
+    install_package, installable_packages, installed_libraries, is_quartus_root, libexec_dir, quartus_root_from,
 };
 pub use locate::{LocateError, MINIMUM_VERSION, NvcInstall, Version, check_version, locate_nvc};
 pub use options::{Library, NvcOptions, RunOptions, VhdlStandard};

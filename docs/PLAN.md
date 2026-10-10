@@ -145,3 +145,11 @@ Append new decisions at the bottom: date, what was decided, and why.
   cursors and markers, live edge snapping with a hover hint, and
   multi-row selection (Ctrl/Shift+click) to group, remove or move rows
   together.
+- **2026-10-10: Intel/Altera Quartus vendor libraries can be installed**
+  (Libraries menu, `cli install quartus [--quartus DIR]`) with nvc's
+  `install-quartus.sh`. Quartus is found from `QUARTUS_ROOTDIR` or the
+  newest version under `C:\intelFPGA_lite`, `C:\intelFPGA`,
+  `C:\intelFPGA_pro`, `C:\altera*` (`~/` and `/opt/` on Linux); otherwise
+  the user picks its folder (the `quartus` folder or the version folder
+  above it). Folders with spaces are refused (nvc's script can't handle
+  them).
