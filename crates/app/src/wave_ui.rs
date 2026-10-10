@@ -12,10 +12,10 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, S
 use studio_core::{Radix, SimTime, Value, format_value};
 use wave::{Bucket, ScopeId, ScopeKind, SignalId, SignalKind, Waveform};
 
-use crate::cursors::{Cursors, frequency_text, snap};
+use crate::cursors::{CursorLine, Cursors, frequency_text, line_to_grab, snap};
 use crate::state::AppState;
 use crate::timeline::Timeline;
-use crate::wave_state::{DisplayedSignal, WaveState};
+use crate::wave_state::{DisplayedSignal, MAX_FILTER_RESULTS, WaveState};
 use crate::wave_style::{Level, Look, Palette, Style, level_of, style_of};
 
 /// Width of the signal names column.
@@ -24,6 +24,8 @@ const NAMES_WIDTH: f32 = 180.0;
 const VALUES_WIDTH: f32 = 110.0;
 /// A click this close (in pixels) to an edge puts the cursor on the edge.
 const SNAP_PIXELS: f32 = 6.0;
+/// Pressing this close (in pixels) to a cursor or marker grabs it.
+const GRAB_PIXELS: f32 = 5.0;
 /// Cursor colours: the main cursor bright yellow, the second one cyan.
 const PRIMARY_CURSOR: Color32 = Color32::from_rgb(0xff, 0xd7, 0x40);
 const SECONDARY_CURSOR: Color32 = Color32::from_rgb(0x40, 0xc8, 0xe0);
@@ -54,8 +56,20 @@ pub fn waves_tab(ui: &mut egui::Ui, state: &mut AppState) {
         .resizable(true)
         .default_size(220.0)
         .show(ui, |ui| {
-            if let Some(wave) = &state.waves.wave {
-                signal_tree(ui, wave, &mut to_add);
+            ui.add(
+                egui::TextEdit::singleline(&mut state.waves.tree_filter)
+                    .hint_text("Search signals")
+                    .desired_width(f32::INFINITY),
+            );
+            if state.waves.tree_filter.trim().is_empty() {
+                if let Some(wave) = &state.waves.wave {
+                    signal_tree(ui, wave, &mut to_add);
+                }
+            } else {
+                let matches = state.waves.filtered_signals().to_vec();
+                if let Some(wave) = &state.waves.wave {
+                    search_results(ui, wave, &matches, &mut to_add);
+                }
             }
         });
     egui::Panel::bottom("wave_cursor_bar").show(ui, |ui| cursor_bar(ui, &mut state.waves));
@@ -117,11 +131,56 @@ fn toolbar(ui: &mut egui::Ui, waves: &mut WaveState) {
             ui.spinner();
             ui.label(format!("Loading signals {done}/{total}"));
         }
+        ui.separator();
+        navigation_controls(ui, waves);
         if let Some(time) = &waves.hover_time {
             ui.separator();
             ui.monospace(time);
         }
     });
+}
+
+/// Next/previous edge and find-value controls, for the selected signal.
+fn navigation_controls(ui: &mut egui::Ui, waves: &mut WaveState) {
+    let selected = waves.wave.is_some() && waves.selected.is_some();
+    let hint = "Select a signal first (click its row)";
+    if ui
+        .add_enabled(selected, egui::Button::new("Prev edge"))
+        .on_hover_text("Cursor to the selected signal's previous change (Left arrow)")
+        .on_disabled_hover_text(hint)
+        .clicked()
+    {
+        let _ = waves.step_edge(false);
+    }
+    if ui
+        .add_enabled(selected, egui::Button::new("Next edge"))
+        .on_hover_text("Cursor to the selected signal's next change (Right arrow)")
+        .on_disabled_hover_text(hint)
+        .clicked()
+    {
+        let _ = waves.step_edge(true);
+    }
+    ui.separator();
+    let field = ui.add_enabled(
+        selected,
+        egui::TextEdit::singleline(&mut waves.find_text)
+            .hint_text("find value")
+            .desired_width(90.0),
+    );
+    let field = field.on_hover_text(
+        "A value of the selected signal, in its radix (A5 on a hex bus), or with a prefix \
+         (0x1F, 0b0101), a letter for every bit (X, U, Z), or an enum name (idle). Enter finds the next.",
+    );
+    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if ui.add_enabled(selected, egui::Button::new("Prev")).on_disabled_hover_text(hint).clicked() {
+        let _ = waves.find_value(false);
+    }
+    if ui.add_enabled(selected, egui::Button::new("Next")).on_disabled_hover_text(hint).clicked() || (enter && selected) {
+        let _ = waves.find_value(true);
+    }
+    if let Some(message) = &waves.find_message {
+        ui.colored_label(ui.visuals().warn_fg_color, message);
+    }
 }
 
 fn empty_message(ui: &mut egui::Ui, waves: &WaveState) {
@@ -142,6 +201,23 @@ fn signal_tree(ui: &mut egui::Ui, wave: &Waveform, to_add: &mut Vec<SignalId>) {
         for scope in wave.top_scopes() {
             let open = wave.scope(scope).kind == ScopeKind::Instance;
             scope_node(ui, wave, scope, open, to_add);
+        }
+    });
+}
+
+/// Signals matching the search box, each with its path for context.
+fn search_results(ui: &mut egui::Ui, wave: &Waveform, matches: &[SignalId], to_add: &mut Vec<SignalId>) {
+    if matches.is_empty() {
+        ui.weak("No matching signals");
+        return;
+    }
+    if matches.len() >= MAX_FILTER_RESULTS {
+        ui.weak(format!("Showing the first {MAX_FILTER_RESULTS} matches"));
+    }
+    egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+        for &id in matches {
+            signal_entry(ui, wave, id, to_add);
+            ui.weak(wave.signal(id).path);
         }
     });
 }
@@ -234,6 +310,12 @@ fn wave_canvas(ui: &mut egui::Ui, waves: &mut WaveState) -> Vec<SignalId> {
     }
     if let Some(time) = waves.centre_request.take() {
         waves.timeline.centre_on(time, width);
+    }
+    if let Some(time) = waves.reveal_request.take() {
+        let x = waves.timeline.x_of(time);
+        if !(0.0..=width).contains(&x) {
+            waves.timeline.centre_on(time, width);
+        }
     }
     handle_mouse_and_keys(ui, &response, waves, &columns);
 
@@ -437,13 +519,7 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
         }
     }
 
-    // Dragging in the wave area pans, like grabbing the trace.
-    if response.dragged_by(egui::PointerButton::Primary)
-        && response.interact_pointer_pos().is_some_and(|p| wave_area.contains(p))
-        && !egui::DragAndDrop::has_any_payload(ui.ctx())
-    {
-        waves.timeline.pan(-response.drag_delta().x);
-    }
+    drag_lines_or_pan(ui, response, waves, columns);
 
     // A click selects the row; in the waves it also places a cursor
     // (Shift: the second cursor), snapped to a nearby edge of that row.
@@ -476,9 +552,21 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
     });
 
     if response.hovered() || response.has_focus() {
-        let (fit, delete, marker) = ui.input(|i| {
-            (i.key_pressed(egui::Key::F), i.key_pressed(egui::Key::Delete), i.key_pressed(egui::Key::M))
+        let (fit, delete, marker, left, right) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::Delete),
+                i.key_pressed(egui::Key::M),
+                i.key_pressed(egui::Key::ArrowLeft),
+                i.key_pressed(egui::Key::ArrowRight),
+            )
         });
+        if left {
+            let _ = waves.step_edge(false);
+        }
+        if right {
+            let _ = waves.step_edge(true);
+        }
         if fit {
             waves.needs_fit = true;
         }
@@ -488,6 +576,58 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
         if marker && let Some(time) = waves.cursors.primary {
             waves.cursors.add_marker(time);
         }
+    }
+}
+
+/// Dragging in the waves: a press on (or near) a cursor or marker drags
+/// that line, which snaps to a nearby edge when let go; a press anywhere
+/// else pans, like grabbing the trace.
+fn drag_lines_or_pan(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveState, columns: &Columns) {
+    let wave_area = columns.waves;
+    // The lines' screen positions, for grabbing.
+    let lines: Vec<(CursorLine, f32)> = waves
+        .cursors
+        .lines()
+        .into_iter()
+        .map(|(line, time)| (line, wave_area.left() + waves.timeline.x_of(time)))
+        .collect();
+    let grab_at = |x: f32| line_to_grab(&lines, x, GRAB_PIXELS);
+
+    // Show a left-right arrow when a line can be grabbed (or is held).
+    let hovering_line = response.hover_pos().filter(|p| wave_area.contains(*p)).and_then(|p| grab_at(p.x));
+    if hovering_line.is_some() || waves.dragging.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+
+    let pressed_in_waves = ui
+        .input(|i| i.pointer.press_origin())
+        .filter(|p| wave_area.contains(*p) && !egui::DragAndDrop::has_any_payload(ui.ctx()));
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && let Some(origin) = pressed_in_waves
+    {
+        waves.dragging = grab_at(origin.x);
+    }
+    let pointer = response.interact_pointer_pos();
+    let time_at = |waves: &WaveState, x: f32| SimTime::from_femtoseconds(waves.timeline.time_at(x - wave_area.left()).max(0.0) as u64);
+
+    if response.dragged_by(egui::PointerButton::Primary) && pressed_in_waves.is_some() {
+        match (waves.dragging, pointer) {
+            (Some(line), Some(p)) => {
+                let time = time_at(waves, p.x);
+                waves.cursors.set_time(line, time);
+            }
+            (None, _) => waves.timeline.pan(-response.drag_delta().x),
+            (Some(_), None) => {}
+        }
+    }
+    if response.drag_stopped()
+        && let Some(line) = waves.dragging.take()
+        && let Some(p) = pointer
+    {
+        // Let go near an edge of the signal under the mouse: snap onto it.
+        let row = row_at(waves, columns, p.y);
+        let time = snapped_time(waves, row, time_at(waves, p.x));
+        waves.cursors.set_time(line, time);
     }
 }
 

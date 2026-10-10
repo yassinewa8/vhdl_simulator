@@ -6,10 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
-use studio_core::{Radix, SimTime, default_radix};
+use studio_core::{Radix, SimTime, Value, default_radix, parse_logic_value};
 use wave::{BackgroundLoad, BackgroundOpen, SignalId, SignalKind, Waveform, open_in_background};
 
-use crate::cursors::Cursors;
+use crate::cursors::{CursorLine, Cursors};
 use crate::timeline::Timeline;
 
 /// A signal in the wave view.
@@ -52,7 +52,23 @@ pub struct WaveState {
     pub cursors: Cursors,
     /// A time to centre the view on next frame (e.g. "go to marker").
     pub centre_request: Option<SimTime>,
+    /// A time to bring into view next frame, if it's off-screen (e.g.
+    /// after jumping to the next edge).
+    pub reveal_request: Option<SimTime>,
+    /// The cursor or marker being dragged with the mouse.
+    pub dragging: Option<CursorLine>,
+    /// What the "find value" box holds.
+    pub find_text: String,
+    /// Why the last edge step or find didn't move the cursor.
+    pub find_message: Option<String>,
+    /// What the search box above the signal tree holds.
+    pub tree_filter: String,
+    /// The signals matching `tree_filter`, worked out once per filter text.
+    filter_cache: Option<(String, Vec<SignalId>)>,
 }
+
+/// The search box shows at most this many matches.
+pub const MAX_FILTER_RESULTS: usize = 500;
 
 impl WaveState {
     /// Starts opening `path`, replacing whatever was shown. (Keeping the
@@ -66,6 +82,9 @@ impl WaveState {
         self.selected = None;
         self.row_scroll = 0.0;
         self.cursors = Cursors::default();
+        self.dragging = None;
+        self.find_message = None;
+        self.filter_cache = None;
     }
 
     /// The file being opened or shown.
@@ -152,11 +171,102 @@ impl WaveState {
         }))
     }
 
+    /// Moves the main cursor to the selected signal's next (or previous)
+    /// change after (or before) the cursor.
+    pub fn step_edge(&mut self, forward: bool) -> Result<SimTime, String> {
+        let (wave, id) = self.selected_signal()?;
+        let found = if forward {
+            let from = self.cursors.primary.unwrap_or(SimTime::ZERO);
+            wave.next_change(id, from)
+        } else {
+            let from = self.cursors.primary.unwrap_or(SimTime::from_femtoseconds(u64::MAX));
+            wave.prev_change(id, from)
+        };
+        self.move_cursor(found, if forward { "after" } else { "before" }, "edge")
+    }
+
+    /// Moves the main cursor to the next (or previous) time the selected
+    /// signal becomes the value typed in `find_text`.
+    pub fn find_value(&mut self, forward: bool) -> Result<SimTime, String> {
+        let (wave, id) = self.selected_signal()?;
+        let index = self.selected.expect("selected_signal checked it");
+        let target = target_value(wave, id, self.signals[index].radix, &self.find_text)?;
+        let found = if forward {
+            wave.next_equal(id, self.cursors.primary.unwrap_or(SimTime::ZERO), &target)
+        } else {
+            let from = self.cursors.primary.unwrap_or(SimTime::from_femtoseconds(u64::MAX));
+            wave.prev_equal(id, from, &target)
+        };
+        let what = format!("'{}'", self.find_text.trim());
+        self.move_cursor(found, if forward { "after" } else { "before" }, &what)
+    }
+
+    /// The signals whose name contains `tree_filter` (ignoring case).
+    pub fn filtered_signals(&mut self) -> &[SignalId] {
+        let filter = self.tree_filter.trim().to_lowercase();
+        let up_to_date = self.filter_cache.as_ref().is_some_and(|(cached, _)| *cached == filter);
+        if !up_to_date {
+            let matches = match &self.wave {
+                Some(wave) => wave
+                    .all_signals()
+                    .into_iter()
+                    .filter(|&id| wave.signal(id).name.to_lowercase().contains(&filter))
+                    .take(MAX_FILTER_RESULTS)
+                    .collect(),
+                None => Vec::new(),
+            };
+            self.filter_cache = Some((filter, matches));
+        }
+        &self.filter_cache.as_ref().expect("just filled").1
+    }
+
+    fn selected_signal(&self) -> Result<(&Waveform, SignalId), String> {
+        let wave = self.wave.as_ref().ok_or("no waveform open")?;
+        let index = self.selected.ok_or("select a signal first (click its row)")?;
+        Ok((wave, self.signals[index].id))
+    }
+
+    /// Puts the main cursor on `found` and brings it into view, or
+    /// explains why nothing was found.
+    fn move_cursor(&mut self, found: Option<SimTime>, direction: &str, what: &str) -> Result<SimTime, String> {
+        match found {
+            Some(time) => {
+                self.cursors.primary = Some(time);
+                self.reveal_request = Some(time);
+                self.find_message = None;
+                Ok(time)
+            }
+            None => {
+                let from = match self.cursors.primary {
+                    Some(time) => format!(" {direction} {time}"),
+                    None => String::new(),
+                };
+                let message = format!("no {what}{from}");
+                self.find_message = Some(message.clone());
+                Err(message)
+            }
+        }
+    }
+
     fn stop_loading(&mut self) {
         for load in &self.loads {
             load.stop();
         }
         self.loads.clear();
+    }
+}
+
+/// What the user typed, as a value of `id`'s kind: bits for logic
+/// signals (read in the signal's radix), names for enumerations and
+/// booleans (nvc writes them in lower case), numbers for reals.
+fn target_value(wave: &Waveform, id: SignalId, radix: Radix, text: &str) -> Result<Value, String> {
+    match wave.signal(id).kind {
+        SignalKind::Logic { width } => parse_logic_value(text, radix, width as usize).map(Value::Logic),
+        SignalKind::Text => match text.trim() {
+            "" => Err("type a value".to_string()),
+            name => Ok(Value::Text(name.to_lowercase())),
+        },
+        SignalKind::Real => text.trim().parse().map(Value::Real).map_err(|_| format!("'{}' is not a number", text.trim())),
     }
 }
 
@@ -226,6 +336,85 @@ mod tests {
         wait_until(&mut state, &woken, |s| !s.is_opening());
         assert!(state.wave.is_none());
         assert!(state.error.as_deref().unwrap().contains("file not found"));
+    }
+
+    /// types_tb.fst open with `paths` added and loaded, the first selected.
+    fn types_with(paths: &[&str]) -> WaveState {
+        let mut state = WaveState::default();
+        let (wake, woken) = waker();
+        state.open(&fixture("types_tb.fst"), wake.clone());
+        wait_until(&mut state, &woken, |s| s.wave.is_some());
+        let wave = state.wave.as_ref().unwrap();
+        let ids: Vec<SignalId> = paths.iter().map(|p| wave.find_signal(p).unwrap()).collect();
+        state.add(&ids, wake);
+        wait_until(&mut state, &woken, |s| s.loading_progress().is_none());
+        state.selected = Some(0);
+        state
+    }
+
+    fn ns(value: u64) -> SimTime {
+        SimTime::from_femtoseconds(value * 1_000_000)
+    }
+
+    #[test]
+    fn stepping_through_edges() {
+        // sl changes every 10 ns: U X Z W - L H at 0, 10, ..., 60 ns.
+        let mut state = types_with(&["types_tb.sl"]);
+        state.cursors.primary = Some(ns(15));
+        assert_eq!(state.step_edge(true), Ok(ns(20)));
+        assert_eq!(state.step_edge(true), Ok(ns(30)));
+        assert_eq!(state.reveal_request, Some(ns(30)), "the view follows");
+        assert_eq!(state.step_edge(false), Ok(ns(20)));
+        state.cursors.primary = Some(ns(60));
+        assert!(state.step_edge(true).unwrap_err().contains("no edge after 60 ns"));
+        assert_eq!(state.cursors.primary, Some(ns(60)), "the cursor stays put");
+    }
+
+    #[test]
+    fn finding_values_of_each_kind() {
+        let mut state = types_with(&["types_tb.sl", "types_tb.bus8", "types_tb.state", "types_tb.r"]);
+        let find = |state: &mut WaveState, row: usize, text: &str| {
+            state.selected = Some(row);
+            state.cursors.primary = None;
+            state.find_text = text.to_string();
+            state.find_value(true)
+        };
+        assert_eq!(find(&mut state, 0, "W"), Ok(ns(30)));
+        assert_eq!(find(&mut state, 1, "A5"), Ok(ns(20)), "hex, the bus's radix");
+        assert_eq!(find(&mut state, 1, "0b01XZWLH-"), Ok(ns(10)));
+        assert_eq!(find(&mut state, 2, "DATA"), Ok(ns(30)), "enum names in any case");
+        assert_eq!(find(&mut state, 3, "3.25"), Ok(ns(50)));
+        assert!(find(&mut state, 1, "77").unwrap_err().contains("no '77'"));
+        assert!(find(&mut state, 1, "0x1FF").unwrap_err().contains("too big"));
+
+        // Backwards from a cursor.
+        state.selected = Some(0);
+        state.find_text = "X".to_string();
+        state.cursors.primary = Some(ns(55));
+        assert_eq!(state.find_value(false), Ok(ns(10)));
+    }
+
+    #[test]
+    fn navigation_needs_a_selected_signal() {
+        let mut state = types_with(&["types_tb.sl"]);
+        state.selected = None;
+        assert!(state.step_edge(true).unwrap_err().contains("select a signal"));
+    }
+
+    #[test]
+    fn filtering_the_signal_list() {
+        let mut state = types_with(&[]);
+        let names = |state: &mut WaveState| -> Vec<String> {
+            let ids = state.filtered_signals().to_vec();
+            let wave = state.wave.as_ref().unwrap();
+            ids.iter().map(|&id| wave.signal(id).path).collect()
+        };
+        state.tree_filter = "COUNT".to_string();
+        assert_eq!(names(&mut state), ["types_tb.count", "types_tb.rec.count"]);
+        state.tree_filter = "inner".to_string();
+        assert_eq!(names(&mut state), ["types_tb.nested.inner"]);
+        state.tree_filter = "nothing like this".to_string();
+        assert!(names(&mut state).is_empty());
     }
 
     #[test]

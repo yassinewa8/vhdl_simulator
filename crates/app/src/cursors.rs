@@ -13,6 +13,15 @@ pub struct Marker {
     pub time: SimTime,
 }
 
+/// One of the vertical lines that can be dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorLine {
+    Primary,
+    Secondary,
+    /// The marker at this index in [`Cursors::markers`].
+    Marker(usize),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cursors {
     /// Placed by clicking; the values column shows values here.
@@ -47,6 +56,46 @@ impl Cursors {
             self.markers.remove(index);
         }
     }
+
+    /// Every line that's placed, with its time. When lines overlap, the
+    /// later ones in this list are on top: markers, then the second
+    /// cursor, then the main cursor.
+    pub fn lines(&self) -> Vec<(CursorLine, SimTime)> {
+        let markers = self.markers.iter().enumerate().map(|(i, m)| (CursorLine::Marker(i), m.time));
+        let cursors = [
+            self.secondary.map(|t| (CursorLine::Secondary, t)),
+            self.primary.map(|t| (CursorLine::Primary, t)),
+        ];
+        markers.chain(cursors.into_iter().flatten()).collect()
+    }
+
+    /// Moves a line to `time` (used while dragging).
+    pub fn set_time(&mut self, line: CursorLine, time: SimTime) {
+        match line {
+            CursorLine::Primary => self.primary = Some(time),
+            CursorLine::Secondary => self.secondary = Some(time),
+            CursorLine::Marker(index) => {
+                if let Some(marker) = self.markers.get_mut(index) {
+                    marker.time = time;
+                }
+            }
+        }
+    }
+}
+
+/// The line a press at `x` grabs: the nearest one within `tolerance`
+/// pixels. `lines` gives each line's x position, in [`Cursors::lines`]
+/// order, so when two are equally near the one drawn on top wins.
+pub fn line_to_grab(lines: &[(CursorLine, f32)], x: f32, tolerance: f32) -> Option<CursorLine> {
+    let mut best: Option<(CursorLine, f32)> = None;
+    for &(line, line_x) in lines {
+        let distance = (line_x - x).abs();
+        // `<=` so a later (top) line wins a tie.
+        if distance <= tolerance && best.is_none_or(|(_, best_distance)| distance <= best_distance) {
+            best = Some((line, distance));
+        }
+    }
+    best.map(|(line, _)| line)
 }
 
 /// Where a click at `clicked` puts a cursor: on the nearest change of the
@@ -112,6 +161,37 @@ mod tests {
         assert_eq!(cursors.markers[index].time, ns(30));
         cursors.remove_marker(99); // out of range: ignored
         assert_eq!(cursors.markers.len(), 2);
+    }
+
+    #[test]
+    fn lines_can_be_moved() {
+        let mut cursors = Cursors {
+            primary: Some(ns(10)),
+            ..Cursors::default()
+        };
+        cursors.add_marker(ns(10));
+        cursors.set_time(CursorLine::Marker(0), ns(40));
+        cursors.set_time(CursorLine::Secondary, ns(30));
+        cursors.set_time(CursorLine::Marker(5), ns(99)); // no such marker: ignored
+        assert_eq!(
+            cursors.lines(),
+            [
+                (CursorLine::Marker(0), ns(40)),
+                (CursorLine::Secondary, ns(30)),
+                (CursorLine::Primary, ns(10)),
+            ]
+        );
+    }
+
+    #[test]
+    fn grabs_the_nearest_line_and_the_cursor_on_a_tie() {
+        let lines = [(CursorLine::Marker(0), 100.0), (CursorLine::Secondary, 140.0), (CursorLine::Primary, 100.0)];
+        // A marker added at the cursor sits under it: the cursor is grabbed.
+        assert_eq!(line_to_grab(&lines, 101.0, 5.0), Some(CursorLine::Primary));
+        assert_eq!(line_to_grab(&lines, 138.0, 5.0), Some(CursorLine::Secondary));
+        assert_eq!(line_to_grab(&lines, 120.0, 5.0), None, "too far from all");
+        let only_marker = [(CursorLine::Marker(0), 100.0)];
+        assert_eq!(line_to_grab(&only_marker, 104.0, 5.0), Some(CursorLine::Marker(0)));
     }
 
     #[test]
