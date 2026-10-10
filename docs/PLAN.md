@@ -10,8 +10,8 @@ progress and decisions. Update it at the end of each phase.
 |-------|------|--------|
 | 0 | Project setup: workspace, rules, CI, empty window | Done |
 | 1 | NVC integration: run analyse/elaborate/run, stream output, cancel, parse diagnostics and report/assert output | Done |
-| 2 | Project and libraries: `project.toml`, automatic compile order, incremental builds, OSVVM/UVVM install, first GUI screen | In progress |
-| 3 | Waveform engine: lazy FST/VCD loading, fast range queries, nine-value std_logic, radix formatting, benchmarks | Not started |
+| 2 | Project and libraries: `project.toml`, automatic compile order, incremental builds, OSVVM/UVVM install, first GUI screen | Done |
+| 3 | Waveform engine: lazy FST/VCD loading, fast range queries, nine-value std_logic, radix formatting, benchmarks | In progress |
 | 4 | Waveform viewer UI: zoom/pan, std_logic colours, cursors, navigation, display options, saved layouts and auto-reload | Not started |
 | 5 | Source, diagnostics and hierarchy: source viewer, external editor, diagnostics panel, instance browser | Not started |
 | 6 | Scripting and settings: command layer, console, Tcl `.do` compatibility, headless `cli build`/`cli test`, themes | Not started |
