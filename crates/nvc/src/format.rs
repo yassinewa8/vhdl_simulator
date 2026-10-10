@@ -1,7 +1,8 @@
-//! Turning parsed nvc output into text for the terminal.
+//! Turning parsed nvc output into text, for the CLI and the GUI's log.
 
-use nvc::OutputItem;
 use studio_core::{Diagnostic, SimMessage};
+
+use crate::output::OutputItem;
 
 /// Formats one item for printing. May be several lines long.
 pub fn format_item(item: &OutputItem) -> String {

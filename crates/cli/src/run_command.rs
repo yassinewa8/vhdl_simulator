@@ -7,7 +7,7 @@ use clap::Args;
 use nvc::{CancelToken, Library, Nvc, NvcOptions, RunOptions, StepReport, VhdlStandard, locate_nvc};
 use studio_core::SimTime;
 
-use crate::format::format_item;
+use nvc::format_item;
 
 #[derive(Debug, Args)]
 pub struct RunArgs {

@@ -1,8 +1,25 @@
-//! Desktop GUI entry point. Opens an empty window for now.
+//! Desktop GUI entry point.
+//!
+//! Modules:
+//! - `state`: what the app knows and the actions buttons trigger (no egui)
+//! - `worker`: runs builds, simulations and installs on a background thread
+//! - `session`: the output log, Problems list and progress line
+//! - `recent`: the recent projects list
+//! - `ui`: drawing the window with egui
+
+mod recent;
+mod session;
+mod state;
+mod ui;
+mod worker;
+
+use std::path::PathBuf;
 
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    // `app path/to/project.toml` (or a folder) opens that project.
+    let project_to_open = std::env::args_os().nth(1).map(PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(window_title())
@@ -13,23 +30,13 @@ fn main() -> eframe::Result {
     eframe::run_native(
         &window_title(),
         options,
-        Box::new(|_creation_context| Ok(Box::new(StudioApp))),
+        Box::new(|creation_context| Ok(Box::new(ui::StudioApp::new(creation_context, project_to_open)))),
     )
 }
 
-/// Text shown in the window's title bar.
+/// Text shown in the window's title bar before a project is opened.
 fn window_title() -> String {
     studio_core::PRODUCT_NAME.to_string()
-}
-
-/// The whole application's state. Empty until Phase 2 adds projects.
-struct StudioApp;
-
-impl eframe::App for StudioApp {
-    /// Called by eframe every frame to draw the window contents.
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ui, |_ui| {});
-    }
 }
 
 #[cfg(test)]

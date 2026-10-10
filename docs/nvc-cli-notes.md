@@ -60,9 +60,12 @@ Checked 2026-10-10 with OSVVM 2025.06a on Windows 11.
   Libraries are compiled into `~/.nvc/lib` (`NVC_INSTALL_DEST` changes it).
 - OSVVM is compiled for 2008 and 2019 into folders like `OSVVM.08`,
   `OSVVM.19`; UVVM likewise (`uvvm_util.08`). Install takes ~15 s.
-- **nvc searches `~/.nvc/lib` by default** (no `-L` needed), and picks the
-  `.08`/`.19` folder matching `--std`: a `.08`-only library is "not found"
-  with `--std=2019`.
+- nvc searches `~/.nvc/lib` by default, and picks the `.08`/`.19` folder
+  matching `--std` (a `.08`-only library is "not found" with
+  `--std=2019`). **But it finds `~` through `HOME` only**, which Windows
+  programs normally don't have (Git Bash and MSYS2 set it). Without it:
+  `** Error: library OSVVM not found`. So we always pass
+  `-L <USERPROFILE>/.nvc/lib`; the `.08`/`.19` choice works with `-L` too.
 - OSVVM's `EndOfTestReports` fails outside OSVVM's own Tcl flow
   (`failed to open OsvvmTemp_NVC/OsvvmRun.yml`); use `ReportAlerts`.
   OSVVM's report lines go to **stdout**.

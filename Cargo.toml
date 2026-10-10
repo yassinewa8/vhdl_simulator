@@ -28,7 +28,9 @@ project = { path = "crates/project" }
 wave = { path = "crates/wave" }
 
 # Third-party (licence in comment)
-eframe = "0.36" # MIT OR Apache-2.0
+# "persistence" lets the app remember recent projects (adds ron: MIT OR Apache-2.0).
+eframe = { version = "0.36", features = ["persistence"] } # MIT OR Apache-2.0
+rfd = "0.17" # MIT; native open/save dialogs
 clap = { version = "4.6", features = ["derive"] } # MIT OR Apache-2.0
 serde = { version = "1", features = ["derive"] } # MIT OR Apache-2.0
 toml = "1" # MIT OR Apache-2.0

@@ -6,9 +6,9 @@ use std::process::ExitCode;
 
 use clap::Args;
 use nvc::{CancelToken, locate_nvc};
-use project::{BuildEvent, BuildPlan, BuildSummary, Project, plan_build, run_build};
+use project::{BuildEvent, BuildPlan, Project, plan_build, run_build};
 
-use crate::format::format_item;
+use nvc::format_item;
 
 #[derive(Debug, Args)]
 pub struct BuildArgs {
@@ -72,7 +72,7 @@ pub fn run(args: BuildArgs) -> ExitCode {
     };
     match run_build(&project, &plan, &install, &CancelToken::new(), &mut print) {
         Ok(summary) => {
-            println!("{}", summary_line(&summary));
+            println!("{summary}");
             if summary.succeeded() {
                 ExitCode::SUCCESS
             } else {
@@ -144,23 +144,6 @@ fn plural(count: usize, noun: &str) -> String {
     }
 }
 
-/// e.g. `Build OK: 3 compiled, 3 up to date` or
-/// `Build FAILED: 1 failed, 2 skipped, 3 compiled, 0 up to date`.
-fn summary_line(summary: &BuildSummary) -> String {
-    let counts = format!("{} compiled, {} up to date", summary.compiled, summary.up_to_date);
-    if summary.succeeded() {
-        format!("Build OK: {counts}")
-    } else if summary.cancelled {
-        format!("Build CANCELLED: {counts}")
-    } else {
-        format!(
-            "Build FAILED: {} failed, {} skipped, {counts}",
-            summary.failed.len(),
-            summary.skipped
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,31 +197,5 @@ mod tests {
             format_event(&skipped).unwrap(),
             "skipped tb.vhd: it needs src/a.vhd, which failed"
         );
-    }
-
-    #[test]
-    fn summary_lines() {
-        let ok = BuildSummary {
-            compiled: 3,
-            up_to_date: 2,
-            ..BuildSummary::default()
-        };
-        assert_eq!(summary_line(&ok), "Build OK: 3 compiled, 2 up to date");
-
-        let failed = BuildSummary {
-            failed: vec![PathBuf::from("a.vhd")],
-            skipped: 2,
-            ..ok.clone()
-        };
-        assert_eq!(
-            summary_line(&failed),
-            "Build FAILED: 1 failed, 2 skipped, 3 compiled, 2 up to date"
-        );
-
-        let cancelled = BuildSummary {
-            cancelled: true,
-            ..ok
-        };
-        assert_eq!(summary_line(&cancelled), "Build CANCELLED: 3 compiled, 2 up to date");
     }
 }

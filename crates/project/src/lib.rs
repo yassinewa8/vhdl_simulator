@@ -7,6 +7,7 @@
 //! - `order`: turning that into "who needs whom" and a compile order
 //! - `state`: fingerprints of compiled files, for incremental builds
 //! - `build`: planning and running a build, and running testbenches
+//! - `new_project`: a starting `project.toml` for a folder of VHDL files
 //!
 //! Installing OSVVM/UVVM lives in the `nvc` crate (`nvc::install_package`),
 //! since it runs scripts from the nvc installation.
@@ -14,6 +15,7 @@
 mod build;
 mod config;
 mod files;
+mod new_project;
 mod order;
 mod scanner;
 mod state;
@@ -27,6 +29,7 @@ pub use build::{
     run_build, run_testbench,
 };
 pub use files::{FileList, SourceFile, find_source_files};
+pub use new_project::{DEFAULT_FILE_PATTERNS, create_project, default_config_for_folder};
 pub use order::{CycleError, Dependency, DependencyGraph, build_graph, compile_order};
 pub use scanner::{DesignUnit, Reference, ScannedFile, UnitKind, scan};
 pub use state::{BUILD_STATE_FILE_NAME, BuildSettings, BuildState, fingerprint};

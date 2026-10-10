@@ -89,5 +89,14 @@ Append new decisions at the bottom: date, what was decided, and why.
   licence; downloaded by hand for now). How end users get it is a Phase 7
   first-run wizard question.
 - **2026-10-10: Installed libraries stay in nvc's default `~/.nvc/lib`,**
-  which nvc searches automatically, so projects need no extra settings to
-  use OSVVM/UVVM.
+  and builds pass `-L ~/.nvc/lib` explicitly, so projects need no extra
+  settings to use OSVVM/UVVM. (nvc finds that folder by itself only via
+  the `HOME` variable, which Windows programs started normally don't
+  have; found in step 4 when the GUI couldn't see OSVVM.)
+- **2026-10-10: GUI structure.** nvc work (build, run, install) runs on a
+  background thread that sends messages to the window through a channel
+  (a FIFO between two clock domains); the window never waits on nvc.
+  Logic lives in egui-free modules (`state`, `worker`, `session`,
+  `recent`) with tests, including real-nvc runs; `ui.rs` only draws.
+  Output and Problems fill the main area until the source viewer arrives
+  in Phase 5. `app path/to/project` opens a project from the command line.

@@ -11,6 +11,7 @@
 //! CLI can print it and the GUI can forward it to its window.
 
 use std::collections::{BTreeMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use nvc::{CancelToken, Library, Nvc, NvcInstall, NvcOptions, OutputItem, ProcessResult, RunOptions, Step, StepReport};
@@ -70,6 +71,14 @@ impl Project {
         };
         let mut options = NvcOptions::new(self.config.project.standard, work);
         options.search_paths = self.config.external.search_paths.clone();
+        // Libraries installed with `nvc --install` (OSVVM, UVVM, ...). nvc
+        // only finds this folder by itself through the HOME variable,
+        // which Windows programs normally don't have, so name it.
+        if let Some(installed) = nvc::default_library_dir()
+            && installed.is_dir()
+        {
+            options.search_paths.push(installed);
+        }
         options.extra_analyse_args = self.config.project.analyse_args.clone();
 
         // Only map folders that exist: nvc warns about mapped libraries
@@ -260,6 +269,26 @@ pub struct BuildSummary {
 impl BuildSummary {
     pub fn succeeded(&self) -> bool {
         self.failed.is_empty() && self.skipped == 0 && !self.cancelled
+    }
+}
+
+impl fmt::Display for BuildSummary {
+    /// e.g. `Build OK: 3 compiled, 3 up to date` or
+    /// `Build FAILED: 1 failed, 2 skipped, 3 compiled, 0 up to date`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let counts = format!("{} compiled, {} up to date", self.compiled, self.up_to_date);
+        if self.succeeded() {
+            write!(f, "Build OK: {counts}")
+        } else if self.cancelled {
+            write!(f, "Build CANCELLED: {counts}")
+        } else {
+            write!(
+                f,
+                "Build FAILED: {} failed, {} skipped, {counts}",
+                self.failed.len(),
+                self.skipped
+            )
+        }
     }
 }
 
@@ -579,7 +608,10 @@ mod tests {
         assert_eq!(nvc.options.work.name, "design");
         assert_eq!(nvc.options.work.dir, Path::new("build").join("design"));
         assert_eq!(nvc.options.extra_analyse_args, ["--relaxed"]);
-        assert_eq!(nvc.options.search_paths, [PathBuf::from("C:/libs")]);
+        // The project's own search path first, then installed libraries.
+        assert_eq!(nvc.options.search_paths[0], PathBuf::from("C:/libs"));
+        let installed = nvc::default_library_dir().filter(|dir| dir.is_dir());
+        assert_eq!(nvc.options.search_paths.get(1), installed.as_ref());
         let mapped: Vec<&str> = nvc.options.library_map.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(mapped, ["unisim"]);
         assert_eq!(nvc.working_dir, project.root);
@@ -609,6 +641,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("no entity called 'no_such_tb'"), "{error}");
+    }
+
+    #[test]
+    fn summary_text() {
+        let ok = BuildSummary {
+            compiled: 3,
+            up_to_date: 2,
+            ..BuildSummary::default()
+        };
+        assert_eq!(ok.to_string(), "Build OK: 3 compiled, 2 up to date");
+
+        let failed = BuildSummary {
+            failed: vec![PathBuf::from("a.vhd")],
+            skipped: 2,
+            ..ok.clone()
+        };
+        assert_eq!(failed.to_string(), "Build FAILED: 1 failed, 2 skipped, 3 compiled, 2 up to date");
+
+        let cancelled = BuildSummary {
+            cancelled: true,
+            ..ok
+        };
+        assert_eq!(cancelled.to_string(), "Build CANCELLED: 3 compiled, 2 up to date");
     }
 
     #[test]

@@ -6,7 +6,6 @@
 //! - `cli install [package]`: install OSVVM, UVVM etc., or list them
 
 mod build_command;
-mod format;
 mod install_command;
 mod run_command;
 

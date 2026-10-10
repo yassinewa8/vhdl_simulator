@@ -29,9 +29,11 @@
 //! - `diagnostics`: parse analyse/elaborate output
 //! - `sim_messages`: parse simulation output
 //! - `steps`: all of the above together, one method per step
+//! - `format`: parsed output as text, for printing or a log window
 //! - `install`: installing OSVVM/UVVM etc. with nvc's install scripts
 
 mod diagnostics;
+mod format;
 mod install;
 mod locate;
 mod options;
@@ -41,6 +43,7 @@ mod sim_messages;
 mod steps;
 
 pub use diagnostics::{DiagnosticParser, parse_full_output};
+pub use format::format_item;
 pub use install::{
     Bash, InstallError, default_library_dir, default_tcllib_dir, find_bash, install_package,
     installable_packages, installed_libraries, libexec_dir,
