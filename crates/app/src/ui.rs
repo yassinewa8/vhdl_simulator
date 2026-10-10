@@ -196,6 +196,7 @@ impl StudioApp {
     /// we need its folder, found automatically or chosen by the user.
     fn quartus_items(&mut self, ui: &mut egui::Ui) {
         let idle = !self.state.is_busy();
+        let mut clicked = false;
         let mut chosen = None;
         if ui
             .add_enabled(idle, egui::Button::new("Install Intel Quartus libraries"))
@@ -206,6 +207,7 @@ impl StudioApp {
             .clicked()
         {
             ui.close();
+            clicked = true;
             chosen = nvc::find_quartus().or_else(pick_quartus_folder);
         }
         if ui
@@ -214,13 +216,22 @@ impl StudioApp {
             .clicked()
         {
             ui.close();
+            clicked = true;
             chosen = pick_quartus_folder();
         }
-        if let Some(quartus_root) = chosen {
-            self.state.start_job(Job::Install {
+        match chosen {
+            Some(quartus_root) => self.state.start_job(Job::Install {
                 package: "quartus".to_string(),
                 quartus_root: Some(quartus_root),
-            });
+            }),
+            // No Quartus found and the folder picker was closed: say so,
+            // rather than leaving the click looking like it did nothing.
+            None if clicked => {
+                let message = nvc::InstallError::NoQuartus { given: None }.to_string();
+                self.state.session.note(&format!("Quartus libraries not installed: {message}"), LogStyle::Warning);
+                self.state.tab = MainTab::Output;
+            }
+            None => {}
         }
     }
 
