@@ -113,6 +113,60 @@ pub fn level_of(value: &Value) -> Level {
     }
 }
 
+/// A colour the user picked for one signal. It replaces the green of
+/// known values; unknowns keep their warning colours, so an X is always
+/// red whatever the signal's colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WaveColour {
+    #[default]
+    Default,
+    Yellow,
+    Cyan,
+    Orange,
+    Pink,
+    White,
+    Blue,
+}
+
+impl WaveColour {
+    pub const ALL: [WaveColour; 7] = [
+        WaveColour::Default,
+        WaveColour::Yellow,
+        WaveColour::Cyan,
+        WaveColour::Orange,
+        WaveColour::Pink,
+        WaveColour::White,
+        WaveColour::Blue,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            WaveColour::Default => "Default (green)",
+            WaveColour::Yellow => "Yellow",
+            WaveColour::Cyan => "Cyan",
+            WaveColour::Orange => "Orange",
+            WaveColour::Pink => "Pink",
+            WaveColour::White => "White",
+            WaveColour::Blue => "Blue",
+        }
+    }
+
+    /// The colour on a dark or light background; `None` for the default.
+    pub fn colour(self, dark_mode: bool) -> Option<Color32> {
+        let (dark, light) = match self {
+            WaveColour::Default => return None,
+            WaveColour::Yellow => ((0xf0, 0xe0, 0x50), (0x9a, 0x86, 0x00)),
+            WaveColour::Cyan => ((0x50, 0xd8, 0xf0), (0x00, 0x7f, 0x96)),
+            WaveColour::Orange => ((0xff, 0xa8, 0x40), (0xb0, 0x5a, 0x00)),
+            WaveColour::Pink => ((0xff, 0x80, 0xc8), (0xb0, 0x2a, 0x78)),
+            WaveColour::White => ((0xf0, 0xf0, 0xf0), (0x30, 0x30, 0x30)),
+            WaveColour::Blue => ((0x70, 0x9c, 0xff), (0x24, 0x48, 0xb4)),
+        };
+        let (r, g, b) = if dark_mode { dark } else { light };
+        Some(Color32::from_rgb(r, g, b))
+    }
+}
+
 /// The colours of the wave view.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette {
@@ -159,6 +213,16 @@ impl Palette {
 
     pub fn for_theme(dark_mode: bool) -> Palette {
         if dark_mode { Palette::dark() } else { Palette::light() }
+    }
+
+    /// This palette with known values drawn in `colour` (if it isn't the
+    /// default). Weak values get a lighter shade of it.
+    pub fn with_signal_colour(mut self, colour: WaveColour, dark_mode: bool) -> Palette {
+        if let Some(chosen) = colour.colour(dark_mode) {
+            self.strong = chosen;
+            self.weak = chosen.gamma_multiply(0.7);
+        }
+        self
     }
 
     pub fn colour(&self, look: Look) -> Color32 {
@@ -253,6 +317,17 @@ mod tests {
                     assert_ne!(a, b, "two looks share a colour");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_signal_colour_changes_known_values_only() {
+        let palette = Palette::dark().with_signal_colour(WaveColour::Cyan, true);
+        assert_eq!(palette.colour(Look::Strong), WaveColour::Cyan.colour(true).unwrap());
+        assert_eq!(palette.colour(Look::Unknown), Palette::dark().unknown, "X stays red");
+        assert_eq!(Palette::dark().with_signal_colour(WaveColour::Default, true), Palette::dark());
+        for colour in WaveColour::ALL {
+            assert_ne!(colour.name(), "");
         }
     }
 

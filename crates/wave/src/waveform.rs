@@ -23,6 +23,14 @@ pub struct ScopeId(pub(crate) usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SignalId(pub(crate) usize);
 
+impl SignalId {
+    /// An id from its number. Ids are only meaningful for the waveform
+    /// they came from; this is for tests that need ids without a file.
+    pub fn from_index(index: usize) -> SignalId {
+        SignalId(index)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeInfo {
     pub id: ScopeId,

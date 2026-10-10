@@ -15,8 +15,9 @@ use wave::{Bucket, ScopeId, ScopeKind, SignalId, SignalKind, Waveform};
 use crate::cursors::{CursorLine, Cursors, frequency_text, line_to_grab, snap};
 use crate::state::AppState;
 use crate::timeline::Timeline;
+use crate::wave_list::{Drop, RowKind, RowRef};
 use crate::wave_state::{DisplayedSignal, MAX_FILTER_RESULTS, WaveState};
-use crate::wave_style::{Level, Look, Palette, Style, level_of, style_of};
+use crate::wave_style::{Level, Look, Palette, Style, WaveColour, level_of, style_of};
 
 /// Width of the signal names column.
 const NAMES_WIDTH: f32 = 180.0;
@@ -31,6 +32,8 @@ const PRIMARY_CURSOR: Color32 = Color32::from_rgb(0xff, 0xd7, 0x40);
 const SECONDARY_CURSOR: Color32 = Color32::from_rgb(0x40, 0xc8, 0xe0);
 const RULER_HEIGHT: f32 = 24.0;
 const ROW_HEIGHT: f32 = 24.0;
+/// How far signals inside a group are indented in the names column.
+const GROUP_INDENT: f32 = 14.0;
 /// Space above and below a wave inside its row.
 const ROW_PADDING: f32 = 4.0;
 /// Ruler labels are at least this many pixels apart.
@@ -334,7 +337,7 @@ fn wave_canvas(ui: &mut egui::Ui, waves: &mut WaveState) -> Vec<SignalId> {
         visuals.weak_text_color(),
     );
 
-    if waves.signals.is_empty() {
+    if waves.list.is_empty() {
         painter.text(
             Pos2::new(columns.waves.center().x, rows_top + 30.0),
             Align2::CENTER_TOP,
@@ -345,30 +348,45 @@ fn wave_canvas(ui: &mut egui::Ui, waves: &mut WaveState) -> Vec<SignalId> {
     }
 
     let wave = waves.wave.as_ref().expect("checked by the caller");
+    let rows = waves.list.rows();
     let first_row = (waves.row_scroll / ROW_HEIGHT).floor().max(0.0) as usize;
-    for (index, signal) in waves.signals.iter().enumerate().skip(first_row) {
+    for (index, &row) in rows.iter().enumerate().skip(first_row) {
         let top = rows_top + index as f32 * ROW_HEIGHT - waves.row_scroll;
         if top > rect.bottom() {
             break; // the rest are below the window
         }
-        let row = Rect::from_min_max(Pos2::new(rect.left(), top), Pos2::new(rect.right(), top + ROW_HEIGHT));
-        if waves.selected == Some(index) {
-            painter.rect_filled(row, 0.0, visuals.selection.bg_fill.gamma_multiply(0.35));
+        let row_rect = Rect::from_min_max(Pos2::new(rect.left(), top), Pos2::new(rect.right(), top + ROW_HEIGHT));
+        if waves.selected == Some(row) {
+            painter.rect_filled(row_rect, 0.0, visuals.selection.bg_fill.gamma_multiply(0.35));
         }
-        painter.text(
-            Pos2::new(columns.names.left() + 6.0, row.center().y),
-            Align2::LEFT_CENTER,
-            &signal.label,
-            FontId::proportional(14.0),
-            visuals.text_color(),
-        );
-        if let Some(cursor) = waves.cursors.primary
-            && let Some(value) = wave.value_at(signal.id, cursor)
-        {
-            draw_cursor_value(&painter, &palette, &value, signal, columns.values, row.center().y);
+        match waves.list.kind(row) {
+            Some(RowKind::Signal { signal, in_group }) => {
+                let indent = if in_group { GROUP_INDENT } else { 0.0 };
+                let name_colour = signal.colour.colour(visuals.dark_mode).unwrap_or(visuals.text_color());
+                painter.with_clip_rect(columns.names).text(
+                    Pos2::new(columns.names.left() + 6.0 + indent, row_rect.center().y),
+                    Align2::LEFT_CENTER,
+                    &signal.label,
+                    FontId::proportional(14.0),
+                    name_colour,
+                );
+                if let Some(cursor) = waves.cursors.primary
+                    && let Some(value) = wave.value_at(signal.id, cursor)
+                {
+                    draw_cursor_value(&painter, &palette, &value, signal, columns.values, row_rect.center().y);
+                }
+                let wave_row = Rect::from_min_max(Pos2::new(columns.waves.left(), top), Pos2::new(columns.waves.right(), top + ROW_HEIGHT));
+                draw_signal(&painter, &visuals, wave, signal, &waves.timeline, wave_row);
+            }
+            Some(RowKind::Divider(label)) => draw_divider(&painter, &visuals, row_rect, columns.names, label),
+            Some(RowKind::GroupHeader { name, collapsed, count }) => {
+                draw_group_header(&painter, &visuals, columns.names, row_rect, name, collapsed, count);
+            }
+            None => {}
         }
-        let wave_row = Rect::from_min_max(Pos2::new(columns.waves.left(), top), Pos2::new(columns.waves.right(), top + ROW_HEIGHT));
-        draw_signal(&painter, &visuals, wave, signal, &waves.timeline, wave_row);
+    }
+    if let Some(drop) = waves.row_drop {
+        draw_drop_guide(&painter, &visuals, &rows, drop, rect, rows_top - waves.row_scroll);
     }
     draw_cursors(&painter, &visuals, &waves.cursors, &waves.timeline, columns.waves);
     if let Some((time, row)) = waves.hover_snap {
@@ -498,10 +516,165 @@ fn markers_menu(ui: &mut egui::Ui, waves: &mut WaveState) {
     }
 }
 
-/// Which displayed signal's row is at height `y`, if any.
-fn row_at(waves: &WaveState, columns: &Columns, y: f32) -> Option<usize> {
+/// A divider row: a line across, with its label (if any) at the left.
+fn draw_divider(painter: &egui::Painter, visuals: &egui::Visuals, row: Rect, names: Rect, label: &str) {
+    let y = row.center().y;
+    let stroke = Stroke::new(1.0, visuals.weak_text_color());
+    let line_start = if label.is_empty() {
+        row.left() + 4.0
+    } else {
+        let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(12.0), visuals.text_color());
+        let width = galley.size().x;
+        painter.with_clip_rect(names).galley(Pos2::new(row.left() + 6.0, y - galley.size().y / 2.0), galley, visuals.text_color());
+        row.left() + 12.0 + width
+    };
+    painter.line_segment([Pos2::new(line_start, y), Pos2::new(row.right() - 4.0, y)], stroke);
+}
+
+/// A group's header: a triangle (pointing right when collapsed, down when
+/// open), the name, and how many signals it holds. The triangle is drawn
+/// rather than typed, as egui's built-in font lacks some arrow symbols.
+fn draw_group_header(painter: &egui::Painter, visuals: &egui::Visuals, names: Rect, row: Rect, name: &str, collapsed: bool, count: usize) {
+    let centre = Pos2::new(row.left() + 12.0, row.center().y);
+    let s = 4.0;
+    let points = if collapsed {
+        vec![centre + Vec2::new(-s / 2.0, -s), centre + Vec2::new(s, 0.0), centre + Vec2::new(-s / 2.0, s)]
+    } else {
+        vec![centre + Vec2::new(-s, -s / 2.0), centre + Vec2::new(s, -s / 2.0), centre + Vec2::new(0.0, s)]
+    };
+    painter.add(egui::Shape::convex_polygon(points, visuals.text_color(), Stroke::NONE));
+    painter.with_clip_rect(names).text(
+        Pos2::new(row.left() + 22.0, row.center().y),
+        Align2::LEFT_CENTER,
+        format!("{name}  ({count})"),
+        FontId::proportional(14.0),
+        visuals.strong_text_color(),
+    );
+    // A faint band across the waves, so the group's start is easy to see.
+    let band = Rect::from_min_max(Pos2::new(names.right(), row.top() + 2.0), Pos2::new(row.right(), row.bottom() - 2.0));
+    painter.rect_filled(band, 0.0, visuals.widgets.inactive.bg_fill.gamma_multiply(0.4));
+}
+
+/// Where a dragged row will land: a line in the gap, or an outline around
+/// the group it will join.
+fn draw_drop_guide(painter: &egui::Painter, visuals: &egui::Visuals, rows: &[RowRef], drop: Drop, rect: Rect, rows_origin: f32) {
+    let colour = visuals.selection.stroke.color;
+    match drop {
+        Drop::Before(before) => {
+            let gap = before.and_then(|b| rows.iter().position(|&r| r == b)).unwrap_or(rows.len());
+            let y = rows_origin + gap as f32 * ROW_HEIGHT;
+            painter.line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], Stroke::new(2.0, colour));
+        }
+        Drop::IntoGroup(item) => {
+            if let Some(index) = rows.iter().position(|&r| r == RowRef::top(item)) {
+                let top = rows_origin + index as f32 * ROW_HEIGHT;
+                let outline = Rect::from_min_max(Pos2::new(rect.left() + 1.0, top), Pos2::new(rect.right() - 1.0, top + ROW_HEIGHT));
+                painter.rect_stroke(outline, 2.0, Stroke::new(2.0, colour), egui::StrokeKind::Inside);
+            }
+        }
+    }
+}
+
+/// The on-screen row (counting from the top of the list) at height `y`.
+fn row_index_at(waves: &WaveState, columns: &Columns, y: f32) -> Option<usize> {
     let row = ((y - columns.names.top() - RULER_HEIGHT + waves.row_scroll) / ROW_HEIGHT).floor();
-    (row >= 0.0 && (row as usize) < waves.signals.len()).then_some(row as usize)
+    (row >= 0.0 && (row as usize) < waves.list.rows().len()).then_some(row as usize)
+}
+
+/// The row at height `y`.
+fn row_at(waves: &WaveState, columns: &Columns, y: f32) -> Option<RowRef> {
+    row_index_at(waves, columns, y).map(|index| waves.list.rows()[index])
+}
+
+/// The right-click menu for the selected row.
+fn row_menu(ui: &mut egui::Ui, waves: &mut WaveState) {
+    let selected = waves.selected;
+    let on_a_row = selected.and_then(|row| waves.list.kind(row)).is_some();
+    match selected.and_then(|row| waves.list.kind(row)) {
+        Some(RowKind::Signal { .. }) => signal_menu(ui, waves, selected.expect("checked")),
+        Some(RowKind::Divider(_)) => {
+            let row = selected.expect("checked");
+            ui.label("Label:");
+            if let Some(label) = waves.list.title_mut(row) {
+                ui.text_edit_singleline(label);
+            }
+            if ui.button("Remove divider").clicked() {
+                waves.remove(row);
+                ui.close();
+            }
+        }
+        Some(RowKind::GroupHeader { collapsed, .. }) => {
+            let row = selected.expect("checked");
+            ui.label("Group name:");
+            if let Some(name) = waves.list.title_mut(row) {
+                ui.text_edit_singleline(name);
+            }
+            if ui.button(if collapsed { "Expand" } else { "Collapse" }).clicked() {
+                waves.list.toggle_collapsed(row.item);
+                ui.close();
+            }
+            if ui.button("Ungroup").on_hover_text("Keep the signals, remove the group").clicked() {
+                waves.list.ungroup(row.item);
+                waves.selected = None;
+                ui.close();
+            }
+            if ui.button("Remove group and its signals").clicked() {
+                waves.remove(row);
+                ui.close();
+            }
+        }
+        None => {}
+    }
+    // The row's own items above, the general ones below.
+    if on_a_row {
+        ui.separator();
+    }
+    if ui.button("Add divider").on_hover_text("A labelled line between rows").clicked() {
+        waves.selected = Some(waves.list.add_divider_after(selected));
+        ui.close();
+    }
+    if ui.button("New group").on_hover_text("Then drag signals onto its header").clicked() {
+        waves.selected = Some(waves.list.add_group_before(selected));
+        ui.close();
+    }
+    if ui.add_enabled(waves.cursors.secondary.is_some(), egui::Button::new("Clear second cursor")).clicked() {
+        waves.cursors.secondary = None;
+        ui.close();
+    }
+}
+
+/// Radix, colour, name and removal for one signal row.
+fn signal_menu(ui: &mut egui::Ui, waves: &mut WaveState, row: RowRef) {
+    let Some(signal) = waves.list.signal_mut(row) else { return };
+    ui.label("Name:");
+    ui.text_edit_singleline(&mut signal.label);
+    if signal.label != signal.original_name() && ui.button("Reset name").clicked() {
+        signal.label = signal.original_name().to_string();
+    }
+    ui.weak(&signal.path);
+    ui.separator();
+    // Radix only matters for buses; enums, reals and single bits show
+    // their values as they are.
+    if !signal.is_bit {
+        ui.menu_button(format!("Radix: {}", signal.radix.name()), |ui| {
+            for radix in Radix::ALL {
+                if ui.radio_value(&mut signal.radix, radix, radix.name()).clicked() {
+                    ui.close();
+                }
+            }
+        });
+    }
+    ui.menu_button(format!("Colour: {}", signal.colour.name()), |ui| {
+        for colour in WaveColour::ALL {
+            if ui.radio_value(&mut signal.colour, colour, colour.name()).clicked() {
+                ui.close();
+            }
+        }
+    });
+    if ui.button("Remove signal").clicked() {
+        waves.remove(row);
+        ui.close();
+    }
 }
 
 fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveState, columns: &Columns) {
@@ -518,12 +691,12 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
     waves.hover_snap = None;
     if let Some(p) = pointer.filter(|p| wave_area.contains(*p))
         && waves.dragging.is_none()
-        && let Some(row) = row_at(waves, columns, p.y)
+        && let Some(index) = row_index_at(waves, columns, p.y)
     {
         let raw = SimTime::from_femtoseconds(waves.timeline.time_at(p.x - wave_area.left()).max(0.0) as u64);
-        let snapped = snapped_time(waves, Some(row), raw);
+        let snapped = snapped_time(waves, Some(waves.list.rows()[index]), raw);
         if snapped != raw {
-            waves.hover_snap = Some((snapped, row));
+            waves.hover_snap = Some((snapped, index));
             waves.hover_time = Some(waves.timeline.format_time(snapped.femtoseconds as f64, TICK_SPACING));
         }
     }
@@ -540,12 +713,13 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
             }
         } else if scroll.y != 0.0 {
             // Over the names and values, scrolling moves up and down the list.
-            let content = waves.signals.len() as f32 * ROW_HEIGHT;
+            let content = waves.list.rows().len() as f32 * ROW_HEIGHT;
             let visible = columns.names.height() - RULER_HEIGHT;
             waves.row_scroll = (waves.row_scroll - scroll.y).clamp(0.0, (content - visible).max(0.0));
         }
     }
 
+    drag_rows(ui, response, waves, columns);
     drag_lines_or_pan(ui, response, waves, columns);
 
     // A click selects the row; in the waves it also places a cursor
@@ -555,6 +729,13 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
     {
         let row = row_at(waves, columns, p.y);
         waves.selected = row;
+        // Clicking a group's name collapses or expands it.
+        if let Some(row) = row
+            && !wave_area.contains(p)
+            && matches!(waves.list.kind(row), Some(RowKind::GroupHeader { .. }))
+        {
+            waves.list.toggle_collapsed(row.item);
+        }
         let clicked = waves.timeline.time_at(p.x - wave_area.left());
         if wave_area.contains(p) && clicked >= 0.0 {
             let time = snapped_time(waves, row, SimTime::from_femtoseconds(clicked as u64));
@@ -565,18 +746,13 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
             }
         }
     }
-    response.context_menu(|ui| {
-        if ui.add_enabled(waves.selected.is_some(), egui::Button::new("Remove signal")).clicked()
-            && let Some(index) = waves.selected
-        {
-            waves.remove(index);
-            ui.close();
-        }
-        if ui.add_enabled(waves.cursors.secondary.is_some(), egui::Button::new("Clear second cursor")).clicked() {
-            waves.cursors.secondary = None;
-            ui.close();
-        }
-    });
+    // Right-clicking selects the row under the mouse, then opens its menu.
+    if response.secondary_clicked()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        waves.selected = row_at(waves, columns, p.y);
+    }
+    response.context_menu(|ui| row_menu(ui, waves));
 
     if response.hovered() || response.has_focus() {
         let (fit, delete, marker, left, right) = ui.input(|i| {
@@ -597,12 +773,37 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
         if fit {
             waves.needs_fit = true;
         }
-        if delete && let Some(index) = waves.selected {
-            waves.remove(index);
+        if delete && let Some(row) = waves.selected {
+            waves.remove(row);
         }
         if marker && let Some(time) = waves.cursors.primary {
             waves.cursors.add_marker(time);
         }
+    }
+}
+
+/// Dragging in the names or values column reorders rows: a guide shows
+/// where the row will land, and it moves when let go.
+fn drag_rows(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveState, columns: &Columns) {
+    let pressed_in_names = ui
+        .input(|i| i.pointer.press_origin())
+        .filter(|p| p.x < columns.waves.left() && !egui::DragAndDrop::has_any_payload(ui.ctx()));
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && let Some(origin) = pressed_in_names
+    {
+        waves.row_drag = row_at(waves, columns, origin.y);
+    }
+    let Some(moving) = waves.row_drag else { return };
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    if let Some(p) = response.interact_pointer_pos() {
+        let position = (p.y - columns.names.top() - RULER_HEIGHT + waves.row_scroll) / ROW_HEIGHT;
+        waves.row_drop = Some(waves.list.drop_target(moving, position));
+    }
+    if response.drag_stopped() {
+        if let Some(drop) = waves.row_drop.take() {
+            waves.selected = waves.list.apply_drop(moving, drop);
+        }
+        waves.row_drag = None;
     }
 }
 
@@ -663,11 +864,11 @@ fn drag_lines_or_pan(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveS
 
 /// `clicked`, moved onto the nearest edge of the signal in `row` if one is
 /// within a few pixels.
-fn snapped_time(waves: &WaveState, row: Option<usize>, clicked: SimTime) -> SimTime {
-    let (Some(wave), Some(row)) = (&waves.wave, row) else {
+fn snapped_time(waves: &WaveState, row: Option<RowRef>, clicked: SimTime) -> SimTime {
+    let (Some(wave), Some(signal)) = (&waves.wave, row.and_then(|row| waves.list.signal(row))) else {
         return clicked;
     };
-    let id = waves.signals[row].id;
+    let id = signal.id;
     // A change exactly at the click counts as "before" it.
     let before = wave.prev_change(id, SimTime::from_femtoseconds(clicked.femtoseconds + 1));
     let after = wave.next_change(id, clicked);
@@ -712,7 +913,7 @@ fn draw_signal(
 
     let shape = Shape {
         painter,
-        palette: Palette::for_theme(visuals.dark_mode),
+        palette: Palette::for_theme(visuals.dark_mode).with_signal_colour(signal.colour, visuals.dark_mode),
         top: row.top() + ROW_PADDING,
         bottom: row.bottom() - ROW_PADDING,
         signal,

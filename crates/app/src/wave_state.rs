@@ -11,6 +11,8 @@ use wave::{BackgroundLoad, BackgroundOpen, SignalId, SignalKind, Waveform, open_
 
 use crate::cursors::{CursorLine, Cursors};
 use crate::timeline::Timeline;
+use crate::wave_list::{Drop, RowRef, SignalList};
+use crate::wave_style::WaveColour;
 
 /// A signal in the wave view.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +25,14 @@ pub struct DisplayedSignal {
     pub radix: Radix,
     /// True for one-bit logic signals, drawn as a line rather than a bus.
     pub is_bit: bool,
+    pub colour: WaveColour,
+}
+
+impl DisplayedSignal {
+    /// The last part of the path: the name before any renaming.
+    pub fn original_name(&self) -> &str {
+        self.path.rsplit('.').next().unwrap_or(&self.path)
+    }
 }
 
 #[derive(Default)]
@@ -32,15 +42,16 @@ pub struct WaveState {
     pub wave: Option<Waveform>,
     /// Why the last open failed, to show in the Waves tab.
     pub error: Option<String>,
-    pub signals: Vec<DisplayedSignal>,
+    /// The rows of the view: signals, dividers and groups.
+    pub list: SignalList,
     /// Signals being read from the file in the background.
     loads: Vec<BackgroundLoad>,
     pub timeline: Timeline,
     /// Set when a new waveform arrives: the view should zoom to fit once
     /// it knows how wide it is.
     pub needs_fit: bool,
-    /// Index into `signals` of the selected row.
-    pub selected: Option<usize>,
+    /// The selected row.
+    pub selected: Option<RowRef>,
     /// How far the signal list is scrolled down, in pixels.
     pub row_scroll: f32,
     /// Zoom asked for by a toolbar button, applied around the centre on
@@ -50,7 +61,7 @@ pub struct WaveState {
     /// to the precision of the current zoom.
     pub hover_time: Option<String>,
     /// While hovering near an edge: where a click would put the cursor,
-    /// and the row of the signal whose edge it is.
+    /// and the on-screen row (counting from the top) of that signal.
     pub hover_snap: Option<(SimTime, usize)>,
     pub cursors: Cursors,
     /// A time to centre the view on next frame (e.g. "go to marker").
@@ -60,6 +71,10 @@ pub struct WaveState {
     pub reveal_request: Option<SimTime>,
     /// The cursor or marker being dragged with the mouse.
     pub dragging: Option<CursorLine>,
+    /// The row being dragged in the names column, to reorder it.
+    pub row_drag: Option<RowRef>,
+    /// Where that row would land if let go now (for drawing a guide).
+    pub row_drop: Option<Drop>,
     /// What the "find value" box holds.
     pub find_text: String,
     /// Why the last edge step or find didn't move the cursor.
@@ -81,11 +96,13 @@ impl WaveState {
         self.opening = Some(open_in_background(path, wake));
         self.wave = None;
         self.error = None;
-        self.signals.clear();
+        self.list = SignalList::default();
         self.selected = None;
         self.row_scroll = 0.0;
         self.cursors = Cursors::default();
         self.dragging = None;
+        self.row_drag = None;
+        self.row_drop = None;
         self.find_message = None;
         self.filter_cache = None;
     }
@@ -133,7 +150,7 @@ impl WaveState {
         let Some(wave) = &self.wave else { return };
         let mut added = Vec::new();
         for &id in ids {
-            if self.signals.iter().any(|shown| shown.id == id) {
+            if self.list.contains(id) {
                 continue;
             }
             let info = wave.signal(id);
@@ -141,12 +158,13 @@ impl WaveState {
                 SignalKind::Logic { width } => (width as usize, width == 1),
                 SignalKind::Text | SignalKind::Real => (0, false),
             };
-            self.signals.push(DisplayedSignal {
+            self.list.push_signal(DisplayedSignal {
                 id,
                 label: info.name.clone(),
                 path: info.path,
                 radix: default_radix(info.vhdl_type.as_deref(), width),
                 is_bit,
+                colour: WaveColour::Default,
             });
             added.push(id);
         }
@@ -155,11 +173,10 @@ impl WaveState {
         }
     }
 
-    pub fn remove(&mut self, index: usize) {
-        if index < self.signals.len() {
-            self.signals.remove(index);
-            self.selected = None;
-        }
+    /// Removes a row (a group header removes the whole group).
+    pub fn remove(&mut self, row: RowRef) {
+        self.list.remove(row);
+        self.selected = None;
     }
 
     /// (signals received, signals requested) across loads in progress,
@@ -192,8 +209,8 @@ impl WaveState {
     /// signal becomes the value typed in `find_text`.
     pub fn find_value(&mut self, forward: bool) -> Result<SimTime, String> {
         let (wave, id) = self.selected_signal()?;
-        let index = self.selected.expect("selected_signal checked it");
-        let target = target_value(wave, id, self.signals[index].radix, &self.find_text)?;
+        let radix = self.selected.and_then(|row| self.list.signal(row)).map_or(Radix::Hex, |s| s.radix);
+        let target = target_value(wave, id, radix, &self.find_text)?;
         let found = if forward {
             wave.next_equal(id, self.cursors.primary.unwrap_or(SimTime::ZERO), &target)
         } else {
@@ -225,8 +242,11 @@ impl WaveState {
 
     fn selected_signal(&self) -> Result<(&Waveform, SignalId), String> {
         let wave = self.wave.as_ref().ok_or("no waveform open")?;
-        let index = self.selected.ok_or("select a signal first (click its row)")?;
-        Ok((wave, self.signals[index].id))
+        let signal = self
+            .selected
+            .and_then(|row| self.list.signal(row))
+            .ok_or("select a signal first (click its row)")?;
+        Ok((wave, signal.id))
     }
 
     /// Puts the main cursor on `found` and brings it into view, or
@@ -316,19 +336,21 @@ mod tests {
         let snum = wave.find_signal("types_tb.snum").unwrap();
         let state_sig = wave.find_signal("types_tb.state").unwrap();
         state.add(&[sl, snum, state_sig, sl], wake);
-        assert_eq!(state.signals.len(), 3, "sl only once");
-        assert_eq!(state.signals[0].label, "sl");
-        assert!(state.signals[0].is_bit);
-        assert_eq!(state.signals[1].radix, Radix::Signed, "signed shows as signed decimal");
-        assert!(!state.signals[2].is_bit);
+        let shown: Vec<&DisplayedSignal> = state.list.signals().collect();
+        assert_eq!(shown.len(), 3, "sl only once");
+        assert_eq!(shown[0].label, "sl");
+        assert!(shown[0].is_bit);
+        assert_eq!(shown[1].radix, Radix::Signed, "signed shows as signed decimal");
+        assert!(!shown[2].is_bit);
+        assert_eq!(shown[2].original_name(), "state");
 
         wait_until(&mut state, &woken, |s| s.loading_progress().is_none());
         let wave = state.wave.as_ref().unwrap();
-        assert!(state.signals.iter().all(|shown| wave.is_loaded(shown.id)));
+        assert!(state.list.signals().all(|shown| wave.is_loaded(shown.id)));
 
-        state.remove(0);
-        assert_eq!(state.signals.len(), 2);
-        assert_eq!(state.signals[0].label, "snum");
+        state.remove(RowRef::top(0));
+        assert_eq!(state.list.signals().count(), 2);
+        assert_eq!(state.list.signals().next().unwrap().label, "snum");
     }
 
     #[test]
@@ -351,7 +373,7 @@ mod tests {
         let ids: Vec<SignalId> = paths.iter().map(|p| wave.find_signal(p).unwrap()).collect();
         state.add(&ids, wake);
         wait_until(&mut state, &woken, |s| s.loading_progress().is_none());
-        state.selected = Some(0);
+        state.selected = Some(RowRef::top(0));
         state
     }
 
@@ -377,7 +399,7 @@ mod tests {
     fn finding_values_of_each_kind() {
         let mut state = types_with(&["types_tb.sl", "types_tb.bus8", "types_tb.state", "types_tb.r"]);
         let find = |state: &mut WaveState, row: usize, text: &str| {
-            state.selected = Some(row);
+            state.selected = Some(RowRef::top(row));
             state.cursors.primary = None;
             state.find_text = text.to_string();
             state.find_value(true)
@@ -391,7 +413,7 @@ mod tests {
         assert!(find(&mut state, 1, "0x1FF").unwrap_err().contains("too big"));
 
         // Backwards from a cursor.
-        state.selected = Some(0);
+        state.selected = Some(RowRef::top(0));
         state.find_text = "X".to_string();
         state.cursors.primary = Some(ns(55));
         assert_eq!(state.find_value(false), Ok(ns(10)));
@@ -401,6 +423,10 @@ mod tests {
     fn navigation_needs_a_selected_signal() {
         let mut state = types_with(&["types_tb.sl"]);
         state.selected = None;
+        assert!(state.step_edge(true).unwrap_err().contains("select a signal"));
+        // A group header or divider isn't a signal either.
+        let divider = state.list.add_divider_after(None);
+        state.selected = Some(divider);
         assert!(state.step_edge(true).unwrap_err().contains("select a signal"));
     }
 
@@ -430,7 +456,7 @@ mod tests {
         state.add(&[sl], wake.clone());
 
         state.open(&fixture("resolution_tb.fst"), wake);
-        assert!(state.signals.is_empty());
+        assert!(state.list.is_empty());
         assert!(state.wave.is_none(), "the old waveform is dropped straight away");
         wait_until(&mut state, &woken, |s| s.wave.is_some());
         assert_eq!(state.path(), Some(fixture("resolution_tb.fst")));
