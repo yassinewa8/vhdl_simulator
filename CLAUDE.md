@@ -1,7 +1,8 @@
 # CLAUDE.md
 
 A desktop GUI and waveform viewer for the NVC VHDL simulator, written in Rust
-(eframe/egui). Read `docs/PLAN.md` at the start of every session.
+(eframe/egui). Read `docs/PLAN.md` and `docs/ARCHITECTURE.md` (code map,
+testing, known gotchas) at the start of every session.
 
 ## About the user
 
