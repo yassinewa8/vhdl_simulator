@@ -49,6 +49,9 @@ pub struct WaveState {
     /// The time under the mouse, shown in the toolbar, already formatted
     /// to the precision of the current zoom.
     pub hover_time: Option<String>,
+    /// While hovering near an edge: where a click would put the cursor,
+    /// and the row of the signal whose edge it is.
+    pub hover_snap: Option<(SimTime, usize)>,
     pub cursors: Cursors,
     /// A time to centre the view on next frame (e.g. "go to marker").
     pub centre_request: Option<SimTime>,

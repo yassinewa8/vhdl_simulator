@@ -371,6 +371,10 @@ fn wave_canvas(ui: &mut egui::Ui, waves: &mut WaveState) -> Vec<SignalId> {
         draw_signal(&painter, &visuals, wave, signal, &waves.timeline, wave_row);
     }
     draw_cursors(&painter, &visuals, &waves.cursors, &waves.timeline, columns.waves);
+    if let Some((time, row)) = waves.hover_snap {
+        let top = rows_top + row as f32 * ROW_HEIGHT - waves.row_scroll;
+        draw_snap_hint(&painter, columns.waves.left() + waves.timeline.x_of(time), top);
+    }
 
     // Signals dragged from the tree and dropped here.
     let mut dropped = Vec::new();
@@ -388,6 +392,14 @@ fn draw_cursor_value(painter: &egui::Painter, palette: &Palette, value: &Value, 
     painter
         .with_clip_rect(area)
         .text(Pos2::new(area.left(), y), Align2::LEFT_CENTER, text, FontId::monospace(12.0), colour);
+}
+
+/// Where a click would snap to: a short line through the row with a dot
+/// on the edge, in the cursor's colour but fainter.
+fn draw_snap_hint(painter: &egui::Painter, x: f32, row_top: f32) {
+    let colour = PRIMARY_CURSOR.gamma_multiply(0.7);
+    painter.line_segment([Pos2::new(x, row_top), Pos2::new(x, row_top + ROW_HEIGHT)], Stroke::new(1.0, colour));
+    painter.circle_filled(Pos2::new(x, row_top + ROW_HEIGHT / 2.0), 3.0, colour);
 }
 
 /// The two cursors and the markers, as vertical lines over the waves.
@@ -501,6 +513,21 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
         .filter(|&t| t >= 0.0)
         .map(|t| waves.timeline.format_time(t, TICK_SPACING));
 
+    // Near an edge of the signal under the mouse: remember where a click
+    // would snap to, so it can be shown before clicking.
+    waves.hover_snap = None;
+    if let Some(p) = pointer.filter(|p| wave_area.contains(*p))
+        && waves.dragging.is_none()
+        && let Some(row) = row_at(waves, columns, p.y)
+    {
+        let raw = SimTime::from_femtoseconds(waves.timeline.time_at(p.x - wave_area.left()).max(0.0) as u64);
+        let snapped = snapped_time(waves, Some(row), raw);
+        if snapped != raw {
+            waves.hover_snap = Some((snapped, row));
+            waves.hover_time = Some(waves.timeline.format_time(snapped.femtoseconds as f64, TICK_SPACING));
+        }
+    }
+
     let (zoom, scroll) = ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
     if let Some(p) = pointer {
         if wave_area.contains(p) {
@@ -613,7 +640,10 @@ fn drag_lines_or_pan(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveS
     if response.dragged_by(egui::PointerButton::Primary) && pressed_in_waves.is_some() {
         match (waves.dragging, pointer) {
             (Some(line), Some(p)) => {
-                let time = time_at(waves, p.x);
+                // Snap live: the line jumps onto an edge of the signal
+                // under the mouse as soon as it comes close to one.
+                let row = row_at(waves, columns, p.y);
+                let time = snapped_time(waves, row, time_at(waves, p.x));
                 waves.cursors.set_time(line, time);
             }
             (None, _) => waves.timeline.pan(-response.drag_delta().x),
