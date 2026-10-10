@@ -349,7 +349,9 @@ impl StudioApp {
             ui.weak(format!("• {stale} file(s) need compiling"));
         }
 
+        let busy = self.state.is_busy();
         let mut clicked: Option<PathBuf> = None;
+        let mut remove: Option<(String, PathBuf)> = None;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for (library, files) in files_by_library(&open.project, plan) {
                 egui::CollapsingHeader::new(RichText::new(library).strong())
@@ -365,15 +367,30 @@ impl StudioApp {
                                 .selected_file
                                 .as_deref()
                                 .is_some_and(|path| same_file(path, &file.source.path));
-                            if file_row(ui, file, selected).clicked() {
+                            let row = file_row(ui, file, selected);
+                            if row.clicked() {
                                 clicked = Some(file.source.path.clone());
                             }
+                            row.context_menu(|ui| {
+                                // Not while building: the build is using the file list.
+                                if ui
+                                    .add_enabled(!busy, egui::Button::new("Remove from project"))
+                                    .on_hover_text("Takes it out of project.toml. The file stays on disk.")
+                                    .clicked()
+                                {
+                                    remove = Some((file.source.library.clone(), file.source.path.clone()));
+                                    ui.close();
+                                }
+                            });
                         }
                     });
             }
         });
         if clicked.is_some() {
             self.state.selected_file = clicked;
+        }
+        if let Some((library, path)) = remove {
+            self.state.remove_file(&library, &path);
         }
     }
 

@@ -153,3 +153,13 @@ Append new decisions at the bottom: date, what was decided, and why.
   the user picks its folder (the `quartus` folder or the version folder
   above it). Folders with spaces are refused (nvc's script can't handle
   them).
+- **2026-10-11: Run builds only what the testbench needs** (its file, the
+  files those need, and the architectures/package bodies of the entities
+  and packages involved), so broken files it doesn't use don't stop it.
+  Build and Rebuild all still compile the whole project. `cli build --run`
+  does the same.
+- **2026-10-11: Files can be removed from the project** (right-click in the
+  file list). The file stays on disk. A file listed by name is taken out of
+  `files`; one matched by a pattern goes into the library's new `exclude`
+  list, so the pattern still picks up new files. project.toml is edited
+  with `toml_edit` so the user's comments and layout are kept.

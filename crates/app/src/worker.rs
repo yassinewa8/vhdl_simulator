@@ -90,7 +90,7 @@ pub fn run_job(job: &Job, context: &JobContext, cancel: &CancelToken, send: &mut
     let outcome = match job {
         Job::Install { package, quartus_root } => install(package, quartus_root, &context.nvc, cancel, send),
         Job::Build { force } => match &context.project {
-            Some(project) => build(project, &context.nvc, *force, cancel, send).0,
+            Some(project) => build(project, &context.nvc, *force, None, cancel, send).0,
             None => JobOutcome::failed("No project is open"),
         },
         Job::Run { testbench } => match &context.project {
@@ -101,19 +101,31 @@ pub fn run_job(job: &Job, context: &JobContext, cancel: &CancelToken, send: &mut
     send(WorkerMessage::Finished(outcome));
 }
 
-/// Builds the project. Also returns the plan if the build succeeded, for
-/// running a testbench next.
+/// Builds the project, or with `only_for`, just what that top-level
+/// entity needs. Also returns the plan if the build succeeded, for running
+/// a testbench next.
 fn build(
     project: &Project,
     nvc: &NvcInstall,
     force: bool,
+    only_for: Option<&str>,
     cancel: &CancelToken,
     send: &mut dyn FnMut(WorkerMessage),
 ) -> (JobOutcome, Option<BuildPlan>) {
-    let plan = match plan_build(project, &nvc.version.to_string(), force) {
+    let mut plan = match plan_build(project, &nvc.version.to_string(), force) {
         Ok(plan) => plan,
         Err(error) => return (JobOutcome::failed(error.to_string()), None),
     };
+    // If the entity isn't in the project, everything is built and running
+    // it reports the problem.
+    if let Some(top) = only_for
+        && let Some(count) = plan.limit_to(top)
+    {
+        send(WorkerMessage::Line(format!(
+            "Building only what {top} needs: {count} of {} files",
+            plan.files.len()
+        )));
+    }
     for warning in &plan.warnings {
         send(WorkerMessage::Line(format!("warning: {warning}")));
     }
@@ -139,7 +151,7 @@ fn build_and_run(
     cancel: &CancelToken,
     send: &mut dyn FnMut(WorkerMessage),
 ) -> JobOutcome {
-    let (build_outcome, plan) = build(project, nvc, false, cancel, send);
+    let (build_outcome, plan) = build(project, nvc, false, Some(&testbench.top), cancel, send);
     let Some(plan) = plan else {
         return build_outcome;
     };

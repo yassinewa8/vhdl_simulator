@@ -10,6 +10,7 @@ studio-core.workspace = true
 nvc.workspace = true
 serde.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 glob.workspace = true
 
 [lints]

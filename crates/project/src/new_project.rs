@@ -23,6 +23,7 @@ pub fn default_config_for_folder(folder: &Path) -> Result<ProjectConfig, Project
     config.libraries.push(LibraryConfig {
         name: "work".to_string(),
         files: DEFAULT_FILE_PATTERNS.iter().map(|p| p.to_string()).collect(),
+        exclude: Vec::new(),
     });
 
     for file in find_source_files(&config, folder)?.files {

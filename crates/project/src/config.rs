@@ -77,6 +77,11 @@ pub struct LibraryConfig {
     /// project folder. The order here doesn't matter for compiling.
     #[serde(default)]
     pub files: Vec<String>,
+    /// Files to leave out even though `files` matches them: paths or glob
+    /// patterns, relative to the project folder. "Remove from project" in
+    /// the GUI adds to this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
 }
 
 /// The `[external]` section.
@@ -512,6 +517,7 @@ mod tests {
         config.libraries.push(LibraryConfig {
             name: "work".to_string(),
             files: vec!["src/*.vhd".to_string()],
+            exclude: Vec::new(),
         });
         let mut testbench = TestbenchConfig::new("demo_tb");
         testbench.stop_time = SimTime::parse("1us");

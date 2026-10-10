@@ -210,6 +210,28 @@ impl AppState {
         }
     }
 
+    /// Takes a file out of the project (it stays on disk), keeping the
+    /// comments in project.toml, and works out the plan again.
+    pub fn remove_file(&mut self, library: &str, path: &Path) {
+        let Some(open) = &self.open else { return };
+        match project::remove_file(&open.project.file, library, path) {
+            Ok(()) => {
+                self.session.note(
+                    &format!(
+                        "Removed {} from library {library} (the file is still on disk)",
+                        path.display()
+                    ),
+                    LogStyle::Note,
+                );
+                if self.selected_file.as_deref().is_some_and(|selected| same_file(selected, path)) {
+                    self.selected_file = None;
+                }
+                self.refresh_plan();
+            }
+            Err(error) => self.report_error(&error),
+        }
+    }
+
     pub fn refresh_installed(&mut self) {
         self.installed = default_library_dir()
             .map(|dir| installed_libraries(&dir))
@@ -397,6 +419,27 @@ mod tests {
         let groups = files_by_library(&open.project, plan);
         let names: Vec<(&str, usize)> = groups.iter().map(|(name, files)| (*name, files.len())).collect();
         assert_eq!(names, [("tb_lib", 1), ("design_lib", 3), ("util_lib", 2)]);
+    }
+
+    #[test]
+    fn removing_a_file_takes_it_out_of_the_project_only() {
+        let folder = copy_of_project("three_libs", "app_removing_a_file");
+        let mut state = AppState::new(RecentProjects::default());
+        state.open_project(&folder);
+        state.selected_file = Some(PathBuf::from("src/b_adder.vhd"));
+
+        state.remove_file("design_lib", Path::new("src/b_adder.vhd"));
+        let plan = state.open.as_ref().unwrap().plan.as_ref().unwrap();
+        assert_eq!(plan.files.len(), 5);
+        assert!(!plan.files.iter().any(|f| same_file(&f.source.path, Path::new("src/b_adder.vhd"))));
+        assert!(folder.join("src/b_adder.vhd").is_file(), "the file stays on disk");
+        assert_eq!(state.selected_file, None);
+        let text = std::fs::read_to_string(folder.join("project.toml")).unwrap();
+        assert!(text.contains("exclude = [\"src/b_adder.vhd\"]"), "{text}");
+        assert!(text.starts_with("# A three-library design"), "comments kept");
+
+        state.remove_file("no_such_lib", Path::new("x.vhd"));
+        assert_eq!(state.session.log.last().unwrap().style, LogStyle::Error);
     }
 
     #[test]

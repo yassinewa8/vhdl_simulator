@@ -46,6 +46,7 @@ pub fn find_source_files(config: &ProjectConfig, root: &Path) -> Result<FileList
     let mut owner: HashMap<PathBuf, String> = HashMap::new();
 
     for library in &config.libraries {
+        let excluded = Exclusions::new(&library.exclude, &mut problems);
         for entry in &library.files {
             let matches = if is_glob_pattern(entry) {
                 let matches = expand_pattern(root, entry, &mut problems);
@@ -65,6 +66,9 @@ pub fn find_source_files(config: &ProjectConfig, root: &Path) -> Result<FileList
 
             for path in matches {
                 let path = relative_to(root, &path);
+                if excluded.matches(&path) {
+                    continue;
+                }
                 match owner.get(&path) {
                     // Matched twice in one library (e.g. by two patterns): fine.
                     Some(existing) if *existing == library.name => {}
@@ -92,6 +96,38 @@ pub fn find_source_files(config: &ProjectConfig, root: &Path) -> Result<FileList
             path: root.join(crate::PROJECT_FILE_NAME),
             problems,
         })
+    }
+}
+
+/// A library's `exclude` list, ready for matching.
+struct Exclusions {
+    patterns: Vec<glob::Pattern>,
+}
+
+impl Exclusions {
+    fn new(entries: &[String], problems: &mut Vec<String>) -> Exclusions {
+        let mut patterns = Vec::new();
+        for entry in entries {
+            let entry = crate::edit::normalise(entry);
+            // A plain path is a pattern that only matches itself.
+            let text = if is_glob_pattern(&entry) { entry.clone() } else { glob::Pattern::escape(&entry) };
+            match glob::Pattern::new(&text) {
+                Ok(pattern) => patterns.push(pattern),
+                Err(error) => problems.push(format!("exclude: '{entry}' is not a valid pattern: {error}")),
+            }
+        }
+        Exclusions { patterns }
+    }
+
+    /// `path` is relative to the project folder, with `/` separators.
+    fn matches(&self, path: &Path) -> bool {
+        // As when finding files, `*` doesn't reach into sub-folders.
+        let options = glob::MatchOptions {
+            require_literal_separator: true,
+            ..glob::MatchOptions::new()
+        };
+        let path = path.to_string_lossy();
+        self.patterns.iter().any(|pattern| pattern.matches_with(&path, options))
     }
 }
 
@@ -143,6 +179,7 @@ mod tests {
             config.libraries.push(LibraryConfig {
                 name: name.to_string(),
                 files: files.iter().map(|f| f.to_string()).collect(),
+                exclude: Vec::new(),
             });
         }
         config

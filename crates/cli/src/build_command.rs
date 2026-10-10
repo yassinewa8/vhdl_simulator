@@ -24,8 +24,9 @@ pub struct BuildArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// After a successful build, run this testbench (its `name`, or its
-    /// `top` entity) and report where its waveform was saved.
+    /// Build only what this testbench (its `name`, or its `top` entity)
+    /// needs, then run it and report where its waveform was saved. Broken
+    /// files it doesn't use don't stop it.
     #[arg(long, value_name = "TESTBENCH")]
     pub run: Option<String>,
 
@@ -53,7 +54,20 @@ pub fn run(args: BuildArgs) -> ExitCode {
     };
     println!("Using nvc {} ({})", install.version, install.program.display());
 
-    let plan = match plan_build(&project, &install.version.to_string(), args.force) {
+    // With --run, find the testbench first: only what it needs is built.
+    let testbench = match &args.run {
+        Some(name) => match find_testbench(&project.config.testbenches, name) {
+            Some(testbench) => Some(testbench),
+            None => {
+                let known: Vec<&str> = project.config.testbenches.iter().map(|tb| tb.display_name()).collect();
+                eprintln!("error: no testbench '{name}' in the project. Known: {}", known.join(", "));
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+
+    let mut plan = match plan_build(&project, &install.version.to_string(), args.force) {
         Ok(plan) => plan,
         Err(error) => {
             eprintln!("error: {error}");
@@ -62,6 +76,11 @@ pub fn run(args: BuildArgs) -> ExitCode {
     };
     for warning in &plan.warnings {
         println!("warning: {warning}");
+    }
+    if let Some(testbench) = testbench
+        && let Some(count) = plan.limit_to(&testbench.top)
+    {
+        println!("Building only what {} needs: {count} of {} files", testbench.top, plan.files.len());
     }
 
     if args.dry_run {
@@ -88,25 +107,20 @@ pub fn run(args: BuildArgs) -> ExitCode {
     if !built {
         return ExitCode::FAILURE;
     }
-    match &args.run {
-        Some(name) => run_one_testbench(&project, &plan, &install, name, &mut print),
+    match testbench {
+        Some(testbench) => run_one_testbench(&project, &plan, &install, testbench, &mut print),
         None => ExitCode::SUCCESS,
     }
 }
 
-/// Elaborates and runs the testbench called `name`, printing its output.
+/// Elaborates and runs `testbench`, printing its output.
 fn run_one_testbench(
     project: &Project,
     plan: &BuildPlan,
     install: &nvc::NvcInstall,
-    name: &str,
+    testbench: &TestbenchConfig,
     print: &mut dyn FnMut(BuildEvent),
 ) -> ExitCode {
-    let Some(testbench) = find_testbench(&project.config.testbenches, name) else {
-        let known: Vec<&str> = project.config.testbenches.iter().map(|tb| tb.display_name()).collect();
-        eprintln!("error: no testbench '{name}' in the project. Known: {}", known.join(", "));
-        return ExitCode::FAILURE;
-    };
     match run_testbench(project, plan, testbench, install, &CancelToken::new(), print) {
         Ok(outcome) => {
             if let Some(file) = &outcome.wave_file {
@@ -141,7 +155,13 @@ fn describe_plan(plan: &BuildPlan) -> String {
     );
     let library_width = plan.files.iter().map(|f| f.source.library.len()).max().unwrap_or(0);
     for (index, file) in plan.files.iter().enumerate() {
-        let status = if file.needs_compile { "" } else { "  (up to date)" };
+        let status = if !file.wanted {
+            "  (not needed)"
+        } else if file.needs_compile {
+            ""
+        } else {
+            "  (up to date)"
+        };
         text.push_str(&format!(
             "{:>4}. {:library_width$}  {}{status}\n",
             index + 1,

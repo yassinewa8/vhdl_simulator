@@ -67,11 +67,12 @@ testable without a GUI. NVC is GPL: only ever run it as a process.
 | File | Holds |
 |---|---|
 | `config.rs` | `ProjectConfig` (serde) = `project.toml` schema; checks with clear messages. |
-| `files.rs` | Expand `files` globs per library. |
+| `files.rs` | Expand `files` globs per library, minus the `exclude` list. |
+| `edit.rs` | `remove_file`: edit project.toml in place with `toml_edit`, keeping comments. |
 | `scanner.rs` | Token-based VHDL scanner: units defined, names referenced. |
 | `order.rs` | Dependency graph, topological compile order, cycle reporting. |
 | `state.rs` | Content fingerprints in `build/build-state.toml`; what needs recompiling. |
-| `build.rs` | `Project`, `plan_build`, `run_build` (one nvc process per file), `run_testbench` (writes `build/waves/<tb>.fst`). |
+| `build.rs` | `Project`, `plan_build`, `BuildPlan::limit_to` (only what a testbench needs; Run uses it), `run_build` (one nvc process per file), `run_testbench` (writes `build/waves/<tb>.fst`). |
 | `new_project.rs` | "New project" from a folder of VHDL files. |
 
 ### wave (`crates/wave`)
@@ -213,6 +214,10 @@ cargo clippy --workspace --all-targets -- -D warnings
   is both double-clickable and draggable use
   `response.interact(Sense::click_and_drag())` + `dnd_set_drag_payload`.
 - Menus: call `ui.close()` after an action.
+
+- `toml_edit` stores the spaces/comments *before* an array item with that
+  item, so a comment after `"a.vhd",` belongs to the next item. Removing an
+  item must hand its prefix on (`edit.rs::remove_keeping_comments`).
 
 ## 6. Ideas and loose ends noted along the way
 

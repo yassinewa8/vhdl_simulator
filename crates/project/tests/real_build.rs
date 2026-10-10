@@ -154,6 +154,33 @@ fn rebuild_compiles_only_what_changed_and_its_dependents() {
 }
 
 #[test]
+fn running_one_testbench_ignores_broken_files_it_does_not_need() {
+    let Some(install) = find_nvc_or_skip() else { return };
+    let project = copy_of_three_libs("running_one_testbench_ignores_broken_files");
+    std::fs::write(
+        project.root.join("src/broken.vhd"),
+        "entity broken is end;\narchitecture a of broken is begin\n  this is not vhdl;\nend;\n",
+    )
+    .unwrap();
+
+    let mut plan = plan_build(&project, &version(&install), false).unwrap();
+    assert_eq!(plan.limit_to("top_tb"), Some(plan.files.len() - 1));
+    let mut events = Vec::new();
+    let summary = run_build(&project, &plan, &install, &CancelToken::new(), &mut |event| events.push(event)).unwrap();
+    assert!(summary.succeeded(), "{summary}");
+    assert_eq!(summary.not_needed, 1);
+    assert!(!compiled_files(&events).iter().any(|path| path.contains("broken")));
+
+    let testbench = project.config.testbenches[0].clone();
+    let outcome = run_testbench(&project, &plan, &testbench, &install, &CancelToken::new(), &mut |_| {}).unwrap();
+    assert!(outcome.passed(), "{:?}", outcome.reports);
+
+    // A full build still reports the broken file.
+    let (_, summary, _) = build(&project, &install);
+    assert_eq!(summary.failed, [PathBuf::from("src/broken.vhd")]);
+}
+
+#[test]
 fn error_skips_dependents_but_builds_independent_files() {
     let Some(install) = find_nvc_or_skip() else { return };
     let project = copy_of_three_libs("error_skips_dependents");

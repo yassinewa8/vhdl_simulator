@@ -127,6 +127,9 @@ pub struct PlannedFile {
     pub fingerprint: String,
     /// False if the file is unchanged since it was last compiled.
     pub needs_compile: bool,
+    /// False if this build leaves the file out because the testbench being
+    /// run doesn't need it (see [`BuildPlan::limit_to`]).
+    pub wanted: bool,
 }
 
 /// What a build will do, worked out before running anything.
@@ -143,7 +146,49 @@ pub struct BuildPlan {
 impl BuildPlan {
     /// How many files will be compiled.
     pub fn compile_count(&self) -> usize {
-        self.files.iter().filter(|file| file.needs_compile).count()
+        self.files.iter().filter(|file| file.wanted && file.needs_compile).count()
+    }
+
+    /// Leaves out of the build every file that the entity `top` (usually a
+    /// testbench) doesn't need, so broken files elsewhere in the project
+    /// don't stop it from running. Returns how many files are still in,
+    /// or `None` if no project file defines `top` (nothing is changed).
+    pub fn limit_to(&mut self, top: &str) -> Option<usize> {
+        let needed = self.files_needed_by(top)?;
+        for (file, needed) in self.files.iter_mut().zip(&needed) {
+            file.wanted = *needed;
+        }
+        Some(needed.iter().filter(|&&needed| needed).count())
+    }
+
+    /// For each file, whether `top` needs it: the file defining `top`, the
+    /// files that one needs, the files those need, and so on. Architectures
+    /// and package bodies are added too: nothing names them, but an entity
+    /// or package is no use without them.
+    fn files_needed_by(&self, top: &str) -> Option<Vec<bool>> {
+        let top = top.to_lowercase();
+        let start = self.files.iter().position(|file| {
+            file.units.iter().any(|unit| {
+                unit.name == top && matches!(unit.kind, UnitKind::Entity | UnitKind::Configuration { .. })
+            })
+        })?;
+
+        let mut needed = vec![false; self.files.len()];
+        let mut to_visit = vec![start];
+        while let Some(index) = to_visit.pop() {
+            if needed[index] {
+                continue;
+            }
+            needed[index] = true;
+            let file = &self.files[index];
+            to_visit.extend(&file.needs);
+            for (other, other_file) in self.files.iter().enumerate() {
+                if !needed[other] && completes(other_file, file) {
+                    to_visit.push(other);
+                }
+            }
+        }
+        Some(needed)
     }
 
     /// The library holding the entity (or configuration) called `name`.
@@ -159,6 +204,20 @@ impl BuildPlan {
             })
             .map(|file| file.source.library.as_str())
     }
+}
+
+/// True if `other` holds an architecture or package body for an entity or
+/// package that `file` defines (in the same library).
+fn completes(other: &PlannedFile, file: &PlannedFile) -> bool {
+    if !other.source.library.eq_ignore_ascii_case(&file.source.library) {
+        return false;
+    }
+    let defines = |kind: &UnitKind, name: &str| file.units.iter().any(|unit| unit.kind == *kind && unit.name == name);
+    other.units.iter().any(|unit| match &unit.kind {
+        UnitKind::Architecture { entity } => defines(&UnitKind::Entity, entity),
+        UnitKind::PackageBody => defines(&UnitKind::Package, &unit.name),
+        _ => false,
+    })
 }
 
 /// Works out what a build needs to do. Reads every source file but
@@ -227,6 +286,7 @@ pub fn plan_build(project: &Project, nvc_version: &str, force: bool) -> Result<B
             needs: graph.dependencies[index].iter().map(|d| position[d.file]).collect(),
             fingerprint: fingerprints[index].clone(),
             needs_compile: needs_compile[index],
+            wanted: true,
         })
         .collect();
 
@@ -276,6 +336,8 @@ pub struct BuildSummary {
     pub up_to_date: usize,
     pub failed: Vec<PathBuf>,
     pub skipped: usize,
+    /// Files left out because the testbench being run doesn't need them.
+    pub not_needed: usize,
     pub cancelled: bool,
 }
 
@@ -289,7 +351,10 @@ impl fmt::Display for BuildSummary {
     /// e.g. `Build OK: 3 compiled, 3 up to date` or
     /// `Build FAILED: 1 failed, 2 skipped, 3 compiled, 0 up to date`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let counts = format!("{} compiled, {} up to date", self.compiled, self.up_to_date);
+        let mut counts = format!("{} compiled, {} up to date", self.compiled, self.up_to_date);
+        if self.not_needed > 0 {
+            counts.push_str(&format!(", {} not needed", self.not_needed));
+        }
         if self.succeeded() {
             write!(f, "Build OK: {counts}")
         } else if self.cancelled {
@@ -312,6 +377,7 @@ enum FileOutcome {
     Compiled,
     Failed,
     Skipped,
+    NotNeeded,
     Cancelled,
 }
 
@@ -341,7 +407,14 @@ pub fn run_build(
 
     for file in &plan.files {
         let key = state_key(&file.source);
-        let outcome = if !file.needs_compile {
+        let outcome = if !file.wanted {
+            // Left alone: whatever was compiled before stays, and if it
+            // has changed it still needs compiling next time.
+            if let Some(old) = plan.previous.files.get(&key) {
+                new_state.files.insert(key, old.clone());
+            }
+            FileOutcome::NotNeeded
+        } else if !file.needs_compile {
             if let Some(old) = plan.previous.files.get(&key) {
                 new_state.files.insert(key, old.clone());
             }
@@ -418,6 +491,7 @@ pub fn run_build(
             .map(|(file, _)| file.source.path.clone())
             .collect(),
         skipped: count(FileOutcome::Skipped),
+        not_needed: count(FileOutcome::NotNeeded),
         cancelled: count(FileOutcome::Cancelled) > 0,
     })
 }
@@ -696,9 +770,59 @@ mod tests {
 
         let cancelled = BuildSummary {
             cancelled: true,
-            ..ok
+            ..ok.clone()
         };
         assert_eq!(cancelled.to_string(), "Build CANCELLED: 3 compiled, 2 up to date");
+
+        let limited = BuildSummary { not_needed: 4, ..ok };
+        assert_eq!(limited.to_string(), "Build OK: 3 compiled, 2 up to date, 4 not needed");
+    }
+
+    #[test]
+    fn limiting_to_a_testbench_keeps_only_what_it_needs() {
+        let (_dir, project) = project_with(
+            "limiting_to_a_testbench",
+            r#"
+            [project]
+            name = "demo"
+            [[library]]
+            name = "util"
+            files = ["util/*.vhd"]
+            [[library]]
+            name = "work"
+            files = ["src/*.vhd", "tb/*.vhd"]
+            "#,
+            &[
+                ("util/pkg.vhd", "package pkg is end;"),
+                ("util/pkg_body.vhd", "package body pkg is end;"),
+                ("src/dut.vhd", "library util; use util.pkg.all; entity dut is end;"),
+                ("src/dut_rtl.vhd", "architecture rtl of dut is begin end;"),
+                ("src/other.vhd", "entity other is end; architecture rtl of other is begin end;"),
+                ("src/broken.vhd", "entity broken is end; architecture a of broken is begin oops end;"),
+                ("tb/dut_tb.vhd", "entity dut_tb is end; architecture tb of dut_tb is begin u: entity work.dut; end;"),
+                ("tb/other_tb.vhd", "entity other_tb is end; architecture tb of other_tb is begin u: entity work.other; end;"),
+            ],
+        );
+        let mut plan = plan_build(&project, "1.23.0", false).unwrap();
+        assert_eq!(plan.compile_count(), 8);
+
+        assert_eq!(plan.limit_to("DUT_TB"), Some(5), "names ignore case");
+        let mut wanted: Vec<String> = plan
+            .files
+            .iter()
+            .filter(|f| f.wanted)
+            .map(|f| f.source.path.to_string_lossy().into_owned())
+            .collect();
+        wanted.sort();
+        // The package body and the architecture in its own file come too.
+        assert_eq!(
+            wanted,
+            ["src/dut.vhd", "src/dut_rtl.vhd", "tb/dut_tb.vhd", "util/pkg.vhd", "util/pkg_body.vhd"]
+        );
+        assert_eq!(plan.compile_count(), 5);
+
+        assert_eq!(plan.limit_to("no_such_tb"), None);
+        assert_eq!(plan.compile_count(), 5, "unchanged when the testbench isn't found");
     }
 
     #[test]
