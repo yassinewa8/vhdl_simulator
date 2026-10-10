@@ -100,3 +100,17 @@ Append new decisions at the bottom: date, what was decided, and why.
   `recent`) with tests, including real-nvc runs; `ui.rs` only draws.
   Output and Problems fill the main area until the source viewer arrives
   in Phase 5. `app path/to/project` opens a project from the command line.
+- **2026-10-10: Waveforms are read with the `wellen` crate** (BSD-3-Clause,
+  used by the Surfer viewer; FST, VCD and GHW). Only the `wave` crate
+  depends on it, so it could be replaced without touching anything else.
+  Details and timings in `docs/phase3-design.md`.
+- **2026-10-10: Every run writes an FST waveform by default** to
+  `<output_dir>/waves/<testbench>.fst`; `waves = false` on a testbench
+  turns it off, and `wave_args` passes extra options (`--include`,
+  `--exclude`, `--dump-arrays`). `--dump-arrays` stays off by default
+  (nvc's default: smaller files).
+- **2026-10-10: Zoomed-out views use a binary search per pixel column**,
+  not a precomputed summary pyramid. A pyramid is only added if the
+  benchmark shows it's needed.
+- **2026-10-10: Benchmarks are an on-demand timing program**, not the
+  `criterion` crate, to avoid a large set of extra dependencies.

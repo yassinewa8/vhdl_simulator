@@ -1,8 +1,9 @@
 # Phase 3 design proposal
 
-Status: **proposed, waiting for the user's answers** to the questions at the
-end. Written 2026-10-10 after investigating; nothing in Phase 3 is built yet.
-When decisions are made, record them in `docs/PLAN.md` (Decisions).
+Status: **accepted 2026-10-10.** Questions 1–4 answered as recommended;
+`--dump-arrays` stays off by default. Recorded in `docs/PLAN.md`
+(Decisions). Question 5 (a real waveform and a known testbench) is still
+open.
 
 ## Findings
 
