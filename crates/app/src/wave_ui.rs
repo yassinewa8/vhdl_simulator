@@ -95,7 +95,7 @@ pub fn waves_tab(ui: &mut egui::Ui, state: &mut AppState) {
     );
 }
 
-fn waker(ctx: &egui::Context) -> impl Fn() + Send + 'static {
+fn waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + 'static {
     let ctx = ctx.clone();
     move || ctx.request_repaint()
 }
@@ -126,9 +126,21 @@ fn toolbar(ui: &mut egui::Ui, waves: &mut WaveState) {
         if ui.add_enabled(has_wave, egui::Button::new("−")).on_hover_text("Zoom out (Ctrl+scroll)").clicked() {
             waves.zoom_request = Some(0.5);
         }
+        if ui
+            .add_enabled(has_wave, egui::Button::new("Reload"))
+            .on_hover_text("Read the file again, keeping signals, zoom and cursors (happens by itself when it changes)")
+            .clicked()
+        {
+            waves.reload(waker(ui.ctx()));
+        }
         if waves.is_opening() {
             ui.spinner();
             ui.label("Opening…");
+        }
+        if !waves.missing_signals.is_empty() {
+            let count = waves.missing_signals.len();
+            ui.colored_label(ui.visuals().warn_fg_color, format!("{count} saved signal(s) not in this waveform"))
+                .on_hover_text(waves.missing_signals.join("\n"));
         }
         if let Some((done, total)) = waves.loading_progress() {
             ui.spinner();

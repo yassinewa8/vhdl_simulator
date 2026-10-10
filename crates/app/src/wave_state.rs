@@ -5,11 +5,14 @@
 //! the wave crate) and this only keeps track of them, so it can be tested.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use studio_core::{Radix, SimTime, Value, default_radix, parse_logic_value};
 use wave::{BackgroundLoad, BackgroundOpen, SignalId, SignalKind, Waveform, open_in_background};
 
 use crate::cursors::{CursorLine, Cursors};
+use crate::layout::Layout;
 use crate::timeline::Timeline;
 use crate::wave_list::{Drop, RowRef, SignalList};
 use crate::wave_style::WaveColour;
@@ -86,17 +89,69 @@ pub struct WaveState {
     pub tree_filter: String,
     /// The signals matching `tree_filter`, worked out once per filter text.
     filter_cache: Option<(String, Vec<SignalId>)>,
+    /// Signals in the restored layout that this waveform doesn't have.
+    pub missing_signals: Vec<String>,
+    /// Asks the window to redraw; kept for loads started later.
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Where this waveform's layout is saved (`None`: not saved).
+    layout_file: Option<PathBuf>,
+    /// A layout to apply as soon as the waveform has opened.
+    pending_layout: Option<Layout>,
+    /// The layout as last saved or restored, to notice changes.
+    saved_layout: Option<Layout>,
+    /// When the layout first differed from the saved one.
+    unsaved_since: Option<Instant>,
+    /// The file's modification time when it was opened.
+    file_stamp: Option<SystemTime>,
+    /// A newer modification time, and when it was first seen.
+    new_stamp: Option<(SystemTime, Instant)>,
+    /// When the file was last checked for changes.
+    last_file_check: Option<Instant>,
 }
+
+/// The layout is saved this long after the last change to it.
+const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);
+/// A changed waveform file is reloaded once it has been unchanged this
+/// long (so a simulator still writing it isn't caught half-way).
+const RELOAD_SETTLE: Duration = Duration::from_secs(1);
+/// How often to look at the waveform file's modification time.
+const FILE_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// The search box shows at most this many matches.
 pub const MAX_FILTER_RESULTS: usize = 500;
 
 impl WaveState {
-    /// Starts opening `path`, replacing whatever was shown. (Keeping the
-    /// signal list across re-runs comes in Phase 4 step 6.)
-    pub fn open(&mut self, path: &Path, wake: impl Fn() + Send + 'static) {
+    /// Starts opening `path` with no saved layout, replacing whatever was
+    /// shown. (The app always opens with a layout file; tests often don't.)
+    #[cfg(test)]
+    pub fn open(&mut self, path: &Path, wake: impl Fn() + Send + Sync + 'static) {
+        self.open_with_layout(path, None, None, wake);
+    }
+
+    /// Starts opening `path`, replacing whatever was shown. Once open, the
+    /// view is set up from `keep` if given (a reload), otherwise from the
+    /// layout saved in `layout_file`, which is also where changes are
+    /// saved from now on.
+    pub fn open_with_layout(
+        &mut self,
+        path: &Path,
+        layout_file: Option<PathBuf>,
+        keep: Option<Layout>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) {
+        self.save_layout_now();
         self.stop_loading();
-        self.opening = Some(open_in_background(path, wake));
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let open_wake = wake.clone();
+        self.wake = Some(wake);
+        self.pending_layout = keep.or_else(|| layout_file.as_deref().and_then(Layout::load));
+        self.saved_layout = None;
+        self.unsaved_since = None;
+        self.layout_file = layout_file;
+        self.missing_signals.clear();
+        self.file_stamp = modified_time(path);
+        self.new_stamp = None;
+        self.opening = Some(open_in_background(path, move || open_wake()));
         self.wave = None;
         self.error = None;
         self.list = SignalList::default();
@@ -134,6 +189,11 @@ impl WaveState {
                 Ok(wave) => {
                     self.wave = Some(wave);
                     self.needs_fit = true;
+                    if let Some(layout) = self.pending_layout.take() {
+                        self.missing_signals = layout.restore(self);
+                        self.load_shown();
+                        self.saved_layout = Some(Layout::capture(self));
+                    }
                 }
                 Err(error) => self.error = Some(error.to_string()),
             }
@@ -243,6 +303,93 @@ impl WaveState {
         }
     }
 
+    /// Starts reading the data of every shown signal not loaded yet.
+    fn load_shown(&mut self) {
+        let (Some(wave), Some(wake)) = (&self.wave, &self.wake) else { return };
+        let ids: Vec<SignalId> = self.list.signals().map(|s| s.id).filter(|&id| !wave.is_loaded(id)).collect();
+        if !ids.is_empty() {
+            let wake = wake.clone();
+            self.loads.push(wave.load_in_background(&ids, move || wake()));
+        }
+    }
+
+    /// Opens the same file again, keeping the current setup (signals,
+    /// zoom, cursors...). Used after a re-run.
+    pub fn reload(&mut self, wake: impl Fn() + Send + Sync + 'static) {
+        let Some(path) = self.path() else { return };
+        let keep = self.wave.is_some().then(|| Layout::capture(self));
+        let layout_file = self.layout_file.clone();
+        self.open_with_layout(&path, layout_file, keep, wake);
+    }
+
+    /// Saves the layout if it changed and has stayed unchanged for a
+    /// moment. Call once per frame.
+    pub fn autosave(&mut self, now: Instant) {
+        if !self.layout_worth_saving() {
+            return;
+        }
+        let current = Layout::capture(self);
+        if self.saved_layout.as_ref() == Some(&current) {
+            self.unsaved_since = None;
+            return;
+        }
+        match self.unsaved_since {
+            None => self.unsaved_since = Some(now),
+            Some(since) if now.duration_since(since) >= AUTOSAVE_DELAY => self.write_layout(current),
+            Some(_) => {}
+        }
+    }
+
+    /// Saves the layout straight away if it changed (e.g. when closing).
+    pub fn save_layout_now(&mut self) {
+        if self.layout_worth_saving() {
+            let current = Layout::capture(self);
+            if self.saved_layout.as_ref() != Some(&current) {
+                self.write_layout(current);
+            }
+        }
+    }
+
+    /// Reloads the waveform if its file changed on disk (e.g. re-simulated
+    /// from the command line) and has settled. Call once per frame.
+    pub fn check_file(&mut self, now: Instant, wake: impl Fn() + Send + Sync + 'static) {
+        if self.is_opening() || self.last_file_check.is_some_and(|last| now.duration_since(last) < FILE_CHECK_INTERVAL) {
+            return;
+        }
+        self.last_file_check = Some(now);
+        let Some(path) = self.path() else { return };
+        let Some(stamp) = modified_time(&path) else { return };
+        if Some(stamp) == self.file_stamp {
+            self.new_stamp = None;
+            return;
+        }
+        match self.new_stamp {
+            Some((seen, since)) if seen == stamp && now.duration_since(since) >= RELOAD_SETTLE => self.reload(wake),
+            Some((seen, _)) if seen == stamp => {}
+            _ => self.new_stamp = Some((stamp, now)),
+        }
+    }
+
+    /// Only save when there's somewhere to save to, and something worth
+    /// saving: a setup with signals, or one that was saved before (so
+    /// clearing it is saved too). Opening a file and looking doesn't
+    /// leave layout files behind.
+    fn layout_worth_saving(&self) -> bool {
+        self.wave.is_some()
+            && self.pending_layout.is_none()
+            && self.layout_file.as_ref().is_some_and(|file| !self.list.is_empty() || file.exists())
+    }
+
+    fn write_layout(&mut self, layout: Layout) {
+        if let Some(file) = &self.layout_file {
+            // A failed save is retried at the next change; it shouldn't
+            // interrupt looking at waves.
+            let _ = layout.save(file);
+        }
+        self.saved_layout = Some(layout);
+        self.unsaved_since = None;
+    }
+
     /// (signals received, signals requested) across loads in progress,
     /// or `None` when nothing is loading.
     pub fn loading_progress(&self) -> Option<(usize, usize)> {
@@ -343,6 +490,11 @@ impl WaveState {
     }
 }
 
+/// When `path` was last changed, if it can be read.
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
 /// What the user typed, as a value of `id`'s kind: bits for logic
 /// signals (read in the signal's radix), names for enumerations and
 /// booleans (nvc writes them in lower case), numbers for reals.
@@ -360,6 +512,7 @@ fn target_value(wave: &Waveform, id: SignalId, radix: Radix, text: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wave_style::WaveColour;
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -375,7 +528,7 @@ mod tests {
         }
     }
 
-    fn waker() -> (impl Fn() + Send + Clone + 'static, mpsc::Receiver<()>) {
+    fn waker() -> (impl Fn() + Send + Sync + Clone + 'static, mpsc::Receiver<()>) {
         let (sender, receiver) = mpsc::channel();
         (
             move || {
@@ -545,6 +698,139 @@ mod tests {
         assert_eq!(names(&mut state), ["types_tb.nested.inner"]);
         state.tree_filter = "nothing like this".to_string();
         assert!(names(&mut state).is_empty());
+    }
+
+    /// A scratch copy of a fixture, so a test can change or touch it.
+    fn scratch_copy(name: &str, test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("nvc-studio-tests").join(test);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let copy = dir.join(name);
+        std::fs::copy(fixture(name), &copy).unwrap();
+        copy
+    }
+
+    /// Opens `file` with `layout_file` and waits until it and its shown
+    /// signals are loaded. Returns the wake-up channel it was opened with.
+    fn open_and_wait(state: &mut WaveState, file: &Path, layout_file: &Path) -> mpsc::Receiver<()> {
+        let (wake, woken) = waker();
+        state.open_with_layout(file, Some(layout_file.to_path_buf()), None, wake);
+        wait_until(state, &woken, |s| s.wave.is_some() && s.loading_progress().is_none());
+        woken
+    }
+
+    #[test]
+    fn layouts_are_saved_and_restored() {
+        let file = scratch_copy("types_tb.fst", "layouts_are_saved_and_restored");
+        let layout_file = file.with_extension("layout.toml");
+        let mut state = WaveState::default();
+        open_and_wait(&mut state, &file, &layout_file);
+        let (wake, woken) = waker();
+        let wave = state.wave.as_ref().unwrap();
+        let ids: Vec<SignalId> = ["types_tb.sl", "types_tb.bus8", "types_tb.state"]
+            .iter()
+            .map(|p| wave.find_signal(p).unwrap())
+            .collect();
+        state.add(&ids, wake);
+        wait_until(&mut state, &woken, |s| s.loading_progress().is_none());
+
+        // Change one of everything.
+        let bus = RowRef::top(1);
+        state.list.signal_mut(bus).unwrap().label = "data".to_string();
+        state.list.signal_mut(bus).unwrap().radix = Radix::Binary;
+        state.list.signal_mut(bus).unwrap().colour = WaveColour::Cyan;
+        state.list.add_divider_after(Some(RowRef::top(0)));
+        state.list.group_rows(&[RowRef::top(3)]);
+        state.cursors.primary = Some(ns(25));
+        state.cursors.secondary = Some(ns(35));
+        state.cursors.add_marker(ns(40));
+        state.timeline = Timeline::from_parts(5e6, 1e5);
+        state.save_layout_now();
+        assert!(layout_file.is_file());
+        let saved = Layout::capture(&state);
+
+        // A fresh view of the same file comes back the same.
+        let mut again = WaveState::default();
+        open_and_wait(&mut again, &file, &layout_file);
+        assert_eq!(Layout::capture(&again), saved);
+        assert!(again.missing_signals.is_empty());
+        let wave = again.wave.as_ref().unwrap();
+        assert!(again.list.signals().all(|s| wave.is_loaded(s.id)), "shown signals are loaded");
+        assert!(!again.needs_fit, "the saved zoom is used, not fit");
+    }
+
+    #[test]
+    fn signals_missing_from_the_waveform_are_skipped_and_reported() {
+        let file = scratch_copy("types_tb.fst", "signals_missing_are_reported");
+        let layout_file = file.with_extension("layout.toml");
+        std::fs::write(
+            &layout_file,
+            "version = 1\n[[row]]\nkind = \"signal\"\npath = \"types_tb.gone\"\n[[row]]\nkind = \"signal\"\npath = \"TYPES_TB.SL\"\n",
+        )
+        .unwrap();
+        let mut state = WaveState::default();
+        open_and_wait(&mut state, &file, &layout_file);
+        assert_eq!(state.missing_signals, ["types_tb.gone"]);
+        assert_eq!(state.list.signals().map(|s| s.label.as_str()).collect::<Vec<_>>(), ["sl"], "paths ignore case");
+        assert!(state.needs_fit, "no saved zoom: fit");
+    }
+
+    #[test]
+    fn reload_keeps_the_setup() {
+        let file = scratch_copy("types_tb.fst", "reload_keeps_the_setup");
+        let mut state = WaveState::default();
+        open_and_wait(&mut state, &file, &file.with_extension("layout.toml"));
+        let sl = state.wave.as_ref().unwrap().find_signal("types_tb.sl").unwrap();
+        state.add(&[sl], || {});
+        state.cursors.primary = Some(ns(25));
+        let before = Layout::capture(&state);
+
+        let (wake, woken) = waker();
+        state.reload(wake);
+        assert!(state.is_opening());
+        wait_until(&mut state, &woken, |s| s.wave.is_some() && s.loading_progress().is_none());
+        assert_eq!(Layout::capture(&state), before);
+        assert!(state.wave.as_ref().unwrap().is_loaded(sl));
+    }
+
+    #[test]
+    fn autosave_waits_for_changes_to_stop() {
+        let file = scratch_copy("types_tb.fst", "autosave_waits");
+        let layout_file = file.with_extension("layout.toml");
+        let mut state = WaveState::default();
+        open_and_wait(&mut state, &file, &layout_file);
+        let start = Instant::now();
+        state.autosave(start);
+        assert!(!layout_file.exists(), "nothing worth saving yet");
+
+        let sl = state.wave.as_ref().unwrap().find_signal("types_tb.sl").unwrap();
+        state.add(&[sl], || {});
+        state.autosave(start);
+        assert!(!layout_file.exists(), "not straight away");
+        state.autosave(start + Duration::from_millis(500));
+        assert!(!layout_file.exists());
+        state.autosave(start + Duration::from_millis(1100));
+        assert!(layout_file.exists(), "a second after the change");
+    }
+
+    #[test]
+    fn a_changed_file_reloads_once_it_settles() {
+        let file = scratch_copy("types_tb.fst", "changed_file_reloads");
+        let mut state = WaveState::default();
+        open_and_wait(&mut state, &file, &file.with_extension("layout.toml"));
+        let start = Instant::now();
+        state.check_file(start, || {});
+        assert!(!state.is_opening(), "unchanged: nothing to do");
+
+        // As if re-simulated: the file gets a newer modification time.
+        let later = SystemTime::now() + Duration::from_secs(10);
+        std::fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
+        state.check_file(start + Duration::from_secs(1), || {});
+        assert!(!state.is_opening(), "just changed: wait for it to settle");
+        state.check_file(start + Duration::from_millis(1600), || {});
+        assert!(!state.is_opening(), "still settling");
+        state.check_file(start + Duration::from_millis(2200), || {});
+        assert!(state.is_opening(), "settled: reloaded");
     }
 
     #[test]

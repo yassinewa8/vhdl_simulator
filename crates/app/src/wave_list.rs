@@ -66,6 +66,20 @@ pub struct SignalList {
 }
 
 impl SignalList {
+    /// A list made of `items`, e.g. from a saved layout.
+    pub fn from_items(items: Vec<Item>) -> SignalList {
+        let groups = items.iter().filter(|item| matches!(item, Item::Group(_))).count();
+        SignalList {
+            items,
+            // So new groups don't repeat the names of restored ones.
+            groups_made: groups as u32,
+        }
+    }
+
+    pub fn items(&self) -> &[Item] {
+        &self.items
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }

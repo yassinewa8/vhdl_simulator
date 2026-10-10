@@ -12,7 +12,7 @@ progress and decisions. Update it at the end of each phase.
 | 1 | NVC integration: run analyse/elaborate/run, stream output, cancel, parse diagnostics and report/assert output | Done |
 | 2 | Project and libraries: `project.toml`, automatic compile order, incremental builds, OSVVM/UVVM install, first GUI screen | Done |
 | 3 | Waveform engine: lazy FST/VCD loading, fast range queries, nine-value std_logic, radix formatting, benchmarks | Done |
-| 4 | Waveform viewer UI: zoom/pan, std_logic colours, cursors, navigation, display options, saved layouts and auto-reload | In progress |
+| 4 | Waveform viewer UI: zoom/pan, std_logic colours, cursors, navigation, display options, saved layouts and auto-reload | Built; real-use checks pending (Questa comparison, a real debug session) |
 | 5 | Source, diagnostics and hierarchy: source viewer, external editor, diagnostics panel, instance browser | Not started |
 | 6 | Scripting and settings: command layer, console, Tcl `.do` compatibility, headless `cli build`/`cli test`, themes | Not started |
 | 7 | Packaging and performance: installers, first-run wizard, profiling, robustness | Not started |
@@ -129,3 +129,19 @@ Append new decisions at the bottom: date, what was decided, and why.
   bar at the bottom. After a successful run its waveform opens and the
   Waves tab is shown. Other waveforms open with File → Open waveform… or
   by dropping a .fst/.vcd/.ghw file on the window.
+- **2026-10-10: Wave view layouts are saved automatically** (about a
+  second after changes stop, and on exit) as readable TOML: for project
+  runs in `<project>/layouts/<testbench>.toml` (beside `project.toml`, so
+  it can be kept in version control, unlike `build/`), for other files as
+  `<waveform>.layout.toml` next to the file. Signals are stored by path;
+  ones missing after a design change are skipped and reported. Nothing is
+  written just for opening a file and looking.
+- **2026-10-10: Re-running reloads the waveform keeping the whole setup**
+  (signals, groups, names, radix, colours, zoom, cursors, markers). The
+  app also reloads when the open waveform file changes on disk and then
+  stays unchanged for a second (e.g. re-simulated from the command line).
+  nvc rewriting a waveform the app has open works on Windows (tested).
+- **2026-10-10: Wave view extras requested during Phase 4:** dragging
+  cursors and markers, live edge snapping with a hover hint, and
+  multi-row selection (Ctrl/Shift+click) to group, remove or move rows
+  together.

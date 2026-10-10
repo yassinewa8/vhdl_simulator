@@ -35,6 +35,15 @@ pub struct Cursors {
 }
 
 impl Cursors {
+    /// Cursors at these times, with no markers yet.
+    pub fn new(primary: Option<SimTime>, secondary: Option<SimTime>) -> Cursors {
+        Cursors {
+            primary,
+            secondary,
+            ..Cursors::default()
+        }
+    }
+
     /// The time between the two cursors, if both are placed.
     pub fn delta(&self) -> Option<SimTime> {
         let (a, b) = (self.primary?, self.secondary?);

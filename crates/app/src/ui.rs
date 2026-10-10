@@ -448,6 +448,7 @@ impl eframe::App for StudioApp {
     }
 
     fn on_exit(&mut self) {
+        self.state.waves.save_layout_now();
         // Don't leave nvc running after the window closes.
         if let Some(job) = &self.state.job {
             job.stop_and_wait(Duration::from_secs(3));

@@ -251,7 +251,9 @@ dependencies = [
  "nvc",
  "project",
  "rfd",
+ "serde",
  "studio-core",
+ "toml",
  "wave",
 ]
 

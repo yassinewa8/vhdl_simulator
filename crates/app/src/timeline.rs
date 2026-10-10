@@ -54,8 +54,28 @@ impl Timeline {
         SimTime::from_femtoseconds(start as u64)..SimTime::from_femtoseconds(end.ceil() as u64)
     }
 
+    /// A timeline starting at `start` femtoseconds with `scale`
+    /// femtoseconds per pixel (as saved in a layout). Nonsense values
+    /// (zero, negative, not a number) fall back to the default view.
+    pub fn from_parts(start: f64, scale: f64) -> Timeline {
+        if start.is_finite() && scale.is_finite() && scale > 0.0 {
+            let mut timeline = Timeline {
+                start,
+                scale: scale.max(1.0 / MAX_PIXELS_PER_FEMTOSECOND),
+            };
+            timeline.clamp_start();
+            timeline
+        } else {
+            Timeline::default()
+        }
+    }
+
+    /// Time at the left edge, in femtoseconds.
+    pub fn start(&self) -> f64 {
+        self.start
+    }
+
     /// Femtoseconds per pixel.
-    #[cfg(test)]
     pub fn scale(&self) -> f64 {
         self.scale
     }

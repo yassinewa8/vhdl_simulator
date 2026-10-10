@@ -85,15 +85,36 @@ impl AppState {
         self.waker = Arc::new(wake);
     }
 
-    fn wake_fn(&self) -> impl Fn() + Send + 'static {
+    fn wake_fn(&self) -> impl Fn() + Send + Sync + 'static {
         let waker = self.waker.clone();
         move || waker()
     }
 
     /// Opens a waveform file in the Waves tab.
+    /// Opens a waveform file in the Waves tab. Its layout is kept next to
+    /// it, as `<file>.layout.toml`.
     pub fn open_waveform(&mut self, path: &Path) {
+        let layout_file = PathBuf::from(format!("{}.layout.toml", path.display()));
         let wake = self.wake_fn();
-        self.waves.open(path, wake);
+        self.waves.open_with_layout(path, Some(layout_file), None, wake);
+        self.tab = MainTab::Waves;
+    }
+
+    /// Shows the waveform a run just wrote. If it's the one already shown,
+    /// it's reloaded keeping the whole setup; otherwise it opens with the
+    /// testbench's layout from `<project>/layouts/`.
+    fn open_run_waveform(&mut self, path: &Path) {
+        if self.waves.wave.is_some() && self.waves.path().as_deref() == Some(path) {
+            let wake = self.wake_fn();
+            self.waves.reload(wake);
+        } else {
+            let layout_file = self.open.as_ref().map(|open| {
+                let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                open.project.root.join("layouts").join(format!("{name}.toml"))
+            });
+            let wake = self.wake_fn();
+            self.waves.open_with_layout(path, layout_file, None, wake);
+        }
         self.tab = MainTab::Waves;
     }
 
@@ -102,6 +123,14 @@ impl AppState {
     pub fn poll(&mut self) {
         self.poll_job();
         self.waves.poll();
+        let now = std::time::Instant::now();
+        self.waves.autosave(now);
+        // While nvc runs it may be rewriting the file; the finished run
+        // reloads it anyway.
+        if !self.is_busy() {
+            let wake = self.wake_fn();
+            self.waves.check_file(now, wake);
+        }
     }
 
     /// Opens a project from its `project.toml` (or the folder holding it).
@@ -245,7 +274,7 @@ impl AppState {
             self.tab = MainTab::Problems;
         } else if let (true, Some(wave_file)) = (outcome.succeeded, &outcome.wave_file) {
             // After a successful run, show its waveform.
-            self.open_waveform(wave_file);
+            self.open_run_waveform(wave_file);
         }
     }
 
@@ -410,6 +439,20 @@ mod tests {
         // The waveform opened in the Waves tab.
         assert_eq!(state.tab, MainTab::Waves);
         assert!(state.waves.wave.is_some(), "{:?}", state.waves.error);
+
+        // Set up the view, then run again: nvc rewrites the waveform the
+        // app has open (which must not be locked), and the setup stays.
+        let x = state.waves.wave.as_ref().unwrap().find_signal("top_tb.x").unwrap();
+        state.waves.add(&[x], || {});
+        state.waves.cursors.primary = Some(studio_core::SimTime::parse("5 ns").unwrap());
+        let testbench = state.selected_testbench().unwrap().clone();
+        run_to_completion(&mut state, Job::Run { testbench });
+        assert!(state.session.last_outcome.as_ref().unwrap().succeeded, "{:#?}", state.session.log);
+        assert!(state.waves.wave.is_some(), "{:?}", state.waves.error);
+        assert_eq!(state.waves.list.signals().map(|s| s.label.as_str()).collect::<Vec<_>>(), ["x"]);
+        assert_eq!(state.waves.cursors.primary, studio_core::SimTime::parse("5 ns"));
+        state.waves.save_layout_now();
+        assert!(folder.join("layouts").join("top_tb.toml").is_file(), "layout saved in the project");
         // The plan was refreshed after the build: nothing left to compile.
         let plan = state.open.as_ref().unwrap().plan.as_ref().unwrap();
         assert_eq!(plan.compile_count(), 0);
