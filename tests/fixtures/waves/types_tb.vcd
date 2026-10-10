@@ -1,0 +1,93 @@
+$version
+	nvc 1.23.0
+$end
+$timescale
+	1fs
+$end
+$attrbegin misc 03 C:\Users\grimr\AppData\Local\Temp\nvc-studio-fixtures\types_tb.vhd 1 $end
+$attrbegin misc 04 1 10 $end
+$scope vhdl_architecture types_tb $end
+$attrbegin misc 02 STD_LOGIC 1030 $end
+$var logic 1 ! sl $end
+$attrbegin misc 02 STD_LOGIC_VECTOR 1029 $end
+$var logic 8 " bus8[7:0] $end
+$attrbegin misc 02 SIGNED 1028 $end
+$var logic 8 # snum[7:0] $end
+$attrbegin misc 02 STATE_T 1024 $end
+$var string 0 $ state $end
+$attrbegin misc 02 INTEGER 1034 $end
+$var integer 32 % count $end
+$attrbegin misc 02 BOOLEAN 1025 $end
+$var string 0 & flag $end
+$attrbegin misc 02 BIT 1026 $end
+$var logic 1 ' b $end
+$scope vhdl_record rec $end
+$attrbegin misc 02 STD_LOGIC 1030 $end
+$var logic 1 ( valid $end
+$attrbegin misc 02 UNSIGNED 1028 $end
+$var logic 4 ) count[3:0] $end
+$upscope $end
+$attrbegin misc 02 REAL 1035 $end
+$var real 64 * r $end
+$attrbegin misc 02 TIME 1024 $end
+$var string 0 + t $end
+$attrbegin misc 04 1 58 $end
+$scope vhdl_block nested $end
+$attrbegin misc 02 STD_LOGIC 1030 $end
+$var logic 1 , inner $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0,
+s0\040HR +
+r0 *
+b0000 )
+0(
+0'
+sfalse &
+b00000000000000000000000000000000 %
+sidle $
+b00000000 #
+bUUUUUUUU "
+u!
+$end
+#7000000
+1,
+#10000000
+x!
+b01XZWLH- "
+#14000000
+0,
+#20000000
+b10100101 "
+z!
+b11111101 #
+sstart $
+#21000000
+1,
+#28000000
+0,
+#30000000
+sdata $
+w!
+b00000000000000000000000000101010 %
+strue &
+1'
+#35000000
+1,
+#40000000
+-!
+sstop_bit $
+1(
+b1010 )
+#42000000
+0,
+#50000000
+l!
+b00000000000000000000001111101000 %
+r3.25 *
+s7\040NS +
+#60000000
+h!

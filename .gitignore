@@ -6,6 +6,8 @@ work/
 *.fst
 *.vcd
 *.ghw
+# ...except the captured waveforms the wave crate's tests read.
+!tests/fixtures/waves/*
 
 # Editors and OS
 .vscode/
