@@ -3,21 +3,32 @@
 //! Modules:
 //! - `config`: the `project.toml` file (load, save, check)
 //! - `files`: expanding each library's file list and glob patterns
-//! - `scanner`: finding what each VHDL file defines and uses, for compile order
+//! - `scanner`: finding what each VHDL file defines and uses
+//! - `order`: turning that into "who needs whom" and a compile order
+//! - `state`: fingerprints of compiled files, for incremental builds
+//! - `build`: planning and running a build, and running testbenches
 //!
-//! Still to come in Phase 2: compile order, incremental builds and
-//! installing libraries with `nvc --install`.
+//! Still to come in Phase 2: installing libraries with `nvc --install`.
 
+mod build;
 mod config;
 mod files;
+mod order;
 mod scanner;
+mod state;
 
 pub use config::{
     ExternalLibraries, LibraryConfig, ProjectConfig, ProjectError, ProjectSettings,
     TestbenchConfig, is_vhdl_identifier,
 };
+pub use build::{
+    BuildEvent, BuildPlan, BuildSummary, PlannedFile, Project, TestbenchOutcome, plan_build,
+    run_build, run_testbench,
+};
 pub use files::{FileList, SourceFile, find_source_files};
+pub use order::{CycleError, Dependency, DependencyGraph, build_graph, compile_order};
 pub use scanner::{DesignUnit, Reference, ScannedFile, UnitKind, scan};
+pub use state::{BUILD_STATE_FILE_NAME, BuildSettings, BuildState, fingerprint};
 
 /// File name of a project file at the root of a user's VHDL project.
 pub const PROJECT_FILE_NAME: &str = "project.toml";

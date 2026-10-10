@@ -10,10 +10,8 @@
 //! use nvc::{CancelToken, Library, Nvc, NvcOptions, RunOptions, VhdlStandard, locate_nvc};
 //!
 //! let install = locate_nvc(None)?;
-//! let options = NvcOptions {
-//!     standard: VhdlStandard::Vhdl2008,
-//!     work: Library { name: "work".into(), dir: "work".into() },
-//! };
+//! let work = Library { name: "work".into(), dir: "work".into() };
+//! let options = NvcOptions::new(VhdlStandard::Vhdl2008, work);
 //! let nvc = Nvc::new(&install, options, ".");
 //! let cancel = CancelToken::new();
 //! let mut print = |item: &nvc::OutputItem| println!("{item:?}");

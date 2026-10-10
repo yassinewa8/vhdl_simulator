@@ -1,0 +1,25 @@
+# A three-library design whose file names are deliberately in the wrong
+# order alphabetically, to test automatic compile order:
+#   util_lib:   math_pkg (package) and its body in a separate file
+#   design_lib: a context, an adder, and a top level that instantiates it
+#   tb_lib:     a self-checking testbench for the top level
+
+[project]
+name = "three_libs"
+
+[[library]]
+name = "tb_lib"
+files = ["tb/*.vhd"]
+
+[[library]]
+name = "design_lib"
+files = ["src/*.vhd"]
+
+[[library]]
+name = "util_lib"
+files = ["util/*.vhd"]
+
+[[testbench]]
+top = "top_tb"
+generics = { OFFSET = 5 }
+stop_time = "1 us"

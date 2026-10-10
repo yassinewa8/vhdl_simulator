@@ -157,6 +157,8 @@ pub enum ProjectError {
     Parse { path: PathBuf, message: String },
     /// The file was read, but some settings don't make sense.
     Invalid { path: PathBuf, problems: Vec<String> },
+    /// Source files need each other in a loop, so they can't be ordered.
+    Cycle(crate::order::CycleError),
 }
 
 impl fmt::Display for ProjectError {
@@ -171,6 +173,7 @@ impl fmt::Display for ProjectError {
                 }
                 Ok(())
             }
+            ProjectError::Cycle(error) => write!(f, "{error}"),
         }
     }
 }

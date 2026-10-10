@@ -54,13 +54,11 @@ pub fn run(args: RunArgs) -> ExitCode {
     };
     println!("Using nvc {} ({})", install.version, install.program.display());
 
-    let options = NvcOptions {
-        standard: args.standard,
-        work: Library {
-            name: "work".to_string(),
-            dir: args.work.clone(),
-        },
+    let work = Library {
+        name: "work".to_string(),
+        dir: args.work.clone(),
     };
+    let options = NvcOptions::new(args.standard, work);
     let nvc = Nvc::new(&install, options, ".");
     // Ctrl+C stops nvc too (the terminal sends it to both programs), so
     // the CLI never needs to cancel; the GUI's Stop button will.

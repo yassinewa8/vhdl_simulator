@@ -67,6 +67,16 @@ pub struct NvcOptions {
     pub standard: VhdlStandard,
     /// The library that design units are analysed into.
     pub work: Library,
+    /// Folders containing compiled libraries (`-L`).
+    pub search_paths: Vec<PathBuf>,
+    /// Other libraries by name (`--map=NAME:PATH`).
+    pub library_map: Vec<Library>,
+    /// Extra options placed after `-a`, e.g. `--relaxed`.
+    pub extra_analyse_args: Vec<String>,
+    /// Extra options placed after `-e`, e.g. `--jit`.
+    pub extra_elaborate_args: Vec<String>,
+    /// Extra options placed after `-r`, e.g. `--exit-severity=error`.
+    pub extra_run_args: Vec<String>,
 }
 
 /// Settings for the run step only.
@@ -79,10 +89,24 @@ pub struct RunOptions {
 }
 
 impl NvcOptions {
+    /// Options with just a standard and work library, and nothing extra.
+    pub fn new(standard: VhdlStandard, work: Library) -> NvcOptions {
+        NvcOptions {
+            standard,
+            work,
+            search_paths: Vec::new(),
+            library_map: Vec::new(),
+            extra_analyse_args: Vec::new(),
+            extra_elaborate_args: Vec::new(),
+            extra_run_args: Vec::new(),
+        }
+    }
+
     /// Arguments for analysing `files` into the work library.
     pub fn analyse_args(&self, files: &[PathBuf]) -> Vec<String> {
         let mut args = self.global_args("full");
         args.push("-a".to_string());
+        args.extend(self.extra_analyse_args.iter().cloned());
         args.extend(files.iter().map(|file| path_arg(file)));
         args
     }
@@ -91,6 +115,7 @@ impl NvcOptions {
     pub fn elaborate_args(&self, top: &str, generics: &[(String, String)]) -> Vec<String> {
         let mut args = self.global_args("full");
         args.push("-e".to_string());
+        args.extend(self.extra_elaborate_args.iter().cloned());
         for (name, value) in generics {
             args.push(format!("-g{name}={value}"));
         }
@@ -105,6 +130,7 @@ impl NvcOptions {
     pub fn run_args(&self, top: &str, run: &RunOptions) -> Vec<String> {
         let mut args = self.global_args("compact");
         args.push("-r".to_string());
+        args.extend(self.extra_run_args.iter().cloned());
         if let Some(stop_time) = run.stop_time {
             args.push(format!("--stop-time={}", stop_time.to_nvc_string()));
         }
@@ -117,11 +143,18 @@ impl NvcOptions {
 
     /// Options that go before the command (`-a`, `-e`, `-r`).
     fn global_args(&self, message_style: &str) -> Vec<String> {
-        vec![
+        let mut args = vec![
             format!("--std={}", self.standard.year()),
             format!("--work={}:{}", self.work.name, path_arg(&self.work.dir)),
             format!("--messages={message_style}"),
-        ]
+        ];
+        for path in &self.search_paths {
+            args.push(format!("-L{}", path_arg(path)));
+        }
+        for library in &self.library_map {
+            args.push(format!("--map={}:{}", library.name, path_arg(&library.dir)));
+        }
+        args
     }
 }
 
@@ -134,13 +167,13 @@ mod tests {
     use super::*;
 
     fn options() -> NvcOptions {
-        NvcOptions {
-            standard: VhdlStandard::Vhdl2008,
-            work: Library {
+        NvcOptions::new(
+            VhdlStandard::Vhdl2008,
+            Library {
                 name: "work".to_string(),
                 dir: PathBuf::from("build/work"),
             },
-        }
+        )
     }
 
     #[test]
@@ -180,6 +213,29 @@ mod tests {
         let args = options().run_args("tb", &RunOptions::default());
         assert!(args.contains(&"--messages=compact".to_string()));
         assert_eq!(&args[3..], ["-r", "tb"]);
+    }
+
+    #[test]
+    fn libraries_and_extra_args_go_in_the_right_places() {
+        let mut options = options();
+        options.search_paths = vec![PathBuf::from("C:/libs")];
+        options.library_map = vec![Library {
+            name: "util".to_string(),
+            dir: PathBuf::from("build/util"),
+        }];
+        options.extra_analyse_args = vec!["--relaxed".to_string()];
+        options.extra_elaborate_args = vec!["--jit".to_string()];
+        options.extra_run_args = vec!["--exit-severity=error".to_string()];
+
+        let analyse = options.analyse_args(&[PathBuf::from("a.vhd")]);
+        assert_eq!(
+            &analyse[3..],
+            ["-LC:/libs", "--map=util:build/util", "-a", "--relaxed", "a.vhd"]
+        );
+        let elaborate = options.elaborate_args("tb", &[("N".to_string(), "1".to_string())]);
+        assert_eq!(&elaborate[5..], ["-e", "--jit", "-gN=1", "tb"]);
+        let run = options.run_args("tb", &RunOptions::default());
+        assert_eq!(&run[5..], ["-r", "--exit-severity=error", "tb"]);
     }
 
     #[test]

@@ -30,6 +30,10 @@ nvc [GLOBAL OPTIONS] COMMAND [COMMAND OPTIONS] [COMMAND [COMMAND OPTIONS]]...
   (`LIB.ENTITY`, `LIB.ENTITY-ARCH`, `LIB.TOP.elab`).
 - `-L PATH` adds a search path; `--map=LIB:PATH` maps a single library.
   Built-in search path: `C:\Program Files\NVC\lib\nvc` (IEEE, STD etc.).
+- `--map` to a folder that doesn't exist yet prints
+  `** Warning: library b not found at out/b` (but carries on). `-L` to a
+  missing folder is silent. So the build only maps project libraries
+  whose folder already exists.
 - `--std` must match between analysis and elaboration, otherwise:
   `** Fatal: ...: design unit was analysed using standard revision 2008 which
   is more recent that the currently selected standard 1993`.

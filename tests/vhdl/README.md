@@ -18,6 +18,9 @@ Current contents:
   kind of error each
 - `sim/messages_tb.vhd`: a report at every severity, then failed asserts
 - `sim/endless_tb.vhd`: never stops by itself; used to test Stop/cancel
+- `projects/three_libs/`: a three-library project (`project.toml`) whose
+  file names sort in the wrong order, for testing automatic compile order,
+  incremental rebuilds and running a testbench from a project
 
 After adding a design whose NVC output a parser test should check, add it
 to `scripts/capture-nvc-fixtures.sh` and re-run the script.

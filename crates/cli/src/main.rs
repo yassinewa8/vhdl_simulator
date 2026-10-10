@@ -2,7 +2,9 @@
 //!
 //! Commands:
 //! - `cli run <files...> --top <entity>`: analyse, elaborate and run
+//! - `cli build [project]`: compile a project in dependency order
 
+mod build_command;
 mod format;
 mod run_command;
 
@@ -25,11 +27,15 @@ struct Cli {
 enum Command {
     /// Analyse, elaborate and run a design, printing parsed messages.
     Run(run_command::RunArgs),
+    /// Compile a project from its project.toml, in dependency order,
+    /// recompiling only what changed.
+    Build(build_command::BuildArgs),
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Run(args) => run_command::run(args),
+        Command::Build(args) => build_command::run(args),
     }
 }
 
@@ -50,12 +56,33 @@ mod tests {
             "--stop-time", "5us",
         ])
         .unwrap();
-        let Command::Run(args) = cli.command;
+        let Command::Run(args) = cli.command else {
+            panic!("expected a run command");
+        };
         assert_eq!(args.files.len(), 2);
         assert_eq!(args.top, "tb");
         assert_eq!(args.standard, nvc::VhdlStandard::Vhdl2019);
         assert_eq!(args.generics, [("N".to_string(), "4".to_string())]);
         assert_eq!(args.stop_time, studio_core::SimTime::parse("5us"));
+    }
+
+    #[test]
+    fn parses_a_build_command() {
+        let cli = Cli::try_parse_from(["cli", "build", "my/project.toml", "--force"]).unwrap();
+        let Command::Build(args) = cli.command else {
+            panic!("expected a build command");
+        };
+        assert_eq!(args.project, std::path::PathBuf::from("my/project.toml"));
+        assert!(args.force);
+        assert!(!args.dry_run);
+
+        // With no path, the current folder is used.
+        let cli = Cli::try_parse_from(["cli", "build", "--dry-run"]).unwrap();
+        let Command::Build(args) = cli.command else {
+            panic!("expected a build command");
+        };
+        assert_eq!(args.project, std::path::PathBuf::from("."));
+        assert!(args.dry_run);
     }
 
     #[test]

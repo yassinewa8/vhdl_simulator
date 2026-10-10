@@ -44,13 +44,11 @@ fn vhdl(relative: &str) -> PathBuf {
 /// An `Nvc` whose work library lives in a nested folder that doesn't exist
 /// yet, which also checks that we create the parent folder for nvc.
 fn nvc_in(install: &NvcInstall, dir: &Path) -> Nvc {
-    let options = NvcOptions {
-        standard: VhdlStandard::Vhdl2008,
-        work: Library {
-            name: "work".to_string(),
-            dir: dir.join("libs").join("work"),
-        },
+    let work = Library {
+        name: "work".to_string(),
+        dir: dir.join("libs").join("work"),
     };
+    let options = NvcOptions::new(VhdlStandard::Vhdl2008, work);
     Nvc::new(install, options, dir)
 }
 

@@ -70,3 +70,10 @@ Append new decisions at the bottom: date, what was decided, and why.
 - **2026-10-10: `cli build` added in Phase 2**, so compile order can be
   tried on real projects before the GUI exists. Phase 6 then only adds
   `cli test` and `cli do`.
+- **2026-10-10: Builds analyse one file per nvc process.** Gives each file
+  its own pass/fail and exact incremental tracking. nvc starts fast (~20
+  files in about 0.2 s here); batching runs of same-library files into one
+  call is a possible later speed-up for big projects.
+- **2026-10-10: A failed file doesn't stop the whole build.** Files that
+  need it (directly or indirectly) are skipped; independent files are still
+  compiled, so every real error is reported in one build.
