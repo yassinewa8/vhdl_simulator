@@ -54,6 +54,11 @@ Checked 2026-10-10 (details and timings in `docs/phase3-design.md`).
   can't open the file: `unexpected number of tokens for command
   attribute`. FST files are fine. Worth reporting to nvc. Our wave crate
   explains this in its error message.
+- OSVVM's own scripts can write waveforms (`SetSaveWaves`: one FST per
+  test in its reports folder), but they pass `--wave=<path>` unquoted, so
+  that fails in a folder whose path has a space (`** Fatal: excess
+  positional argument`). `scripts/real-waveforms.sh` runs them in a
+  space-free temp folder.
 
 ## Installing libraries (`--install`)
 

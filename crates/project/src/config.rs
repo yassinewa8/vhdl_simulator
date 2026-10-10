@@ -126,6 +126,24 @@ pub struct TestbenchConfig {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub run_args: Vec<String>,
+
+    /// Write an FST waveform on every run (the default). `false` runs
+    /// faster and saves disk space when you only need the messages.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub waves: bool,
+
+    /// Extra options for the waveform, e.g. `["--dump-arrays"]` or
+    /// `["--include=*dut*"]`. Passed to nvc's run step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wave_args: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl TestbenchConfig {
@@ -138,6 +156,8 @@ impl TestbenchConfig {
             stop_time: None,
             elaborate_args: Vec::new(),
             run_args: Vec::new(),
+            waves: true,
+            wave_args: Vec::new(),
         }
     }
 
@@ -442,6 +462,33 @@ mod tests {
         assert_eq!(tx.generics["BAUD"], "115200");
         assert_eq!(tx.stop_time, SimTime::parse("10ms"));
         assert_eq!(config.testbenches[1].display_name(), "rx, fast baud");
+        // Waveforms are on unless switched off.
+        assert!(tx.waves);
+        assert!(tx.wave_args.is_empty());
+    }
+
+    #[test]
+    fn waveform_settings() {
+        let config = parse(
+            r#"
+            [project]
+            name = "x"
+            [[testbench]]
+            top = "quiet_tb"
+            waves = false
+            [[testbench]]
+            top = "big_tb"
+            wave_args = ["--dump-arrays", "--include=*dut*"]
+            "#,
+        )
+        .unwrap();
+        assert!(!config.testbenches[0].waves);
+        assert_eq!(config.testbenches[1].wave_args, ["--dump-arrays", "--include=*dut*"]);
+
+        // Saving writes `waves` only when it's switched off.
+        let text = config.to_toml();
+        assert_eq!(text.matches("waves = false").count(), 1, "{text}");
+        assert!(!text.contains("waves = true"), "{text}");
     }
 
     #[test]

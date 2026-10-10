@@ -1,7 +1,7 @@
 //! Converting between `wellen`'s types and ours. Keeping this in one place
 //! means nothing outside this crate ever sees a `wellen` type.
 
-use studio_core::{SimTime, Value, format_vhdl_time, parse_logic_vector};
+use studio_core::{Logic, SimTime, Value, format_vhdl_time, parse_logic_vector};
 use wellen::{ScopeType, SignalValueRef, Timescale, TimescaleUnit};
 
 /// What kind of scope a tree node is.
@@ -89,6 +89,28 @@ pub(crate) fn to_value(value: SignalValueRef<'_>, is_vhdl_time: bool) -> Value {
     }
 }
 
+/// True if `raw` is `target`, compared in place without building a
+/// [`Value`]. Used by the value searches, which check every change in
+/// turn: building a full value each time made a search through 10 million
+/// changes take seconds.
+pub(crate) fn value_matches(raw: SignalValueRef<'_>, target: &Value, is_vhdl_time: bool) -> bool {
+    match (raw, target) {
+        (SignalValueRef::BitVec(bits), Value::Logic(wanted)) => {
+            // Least significant bit first: for counters and buses that's
+            // the bit most likely to differ, so mismatches are found early.
+            bits.width() as usize == wanted.len()
+                && bits
+                    .iter_lsb_to_msb()
+                    .zip(wanted.iter().rev())
+                    .all(|(bit, &logic)| Logic::from_char(bit.as_ascii()) == Some(logic))
+        }
+        (SignalValueRef::String(text), Value::Text(wanted)) if is_vhdl_time => format_vhdl_time(text) == *wanted,
+        (SignalValueRef::String(text), Value::Text(wanted)) => text == wanted,
+        (SignalValueRef::Real(number), Value::Real(wanted)) => number == *wanted,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +133,21 @@ mod tests {
             femtoseconds_per_tick: 1_000,
         };
         assert_eq!(ps.to_time(15), SimTime::parse("15 ps").unwrap());
+    }
+
+    #[test]
+    fn matching_in_place_agrees_with_converting() {
+        let raw = SignalValueRef::bit_vec(States::Two, 4, &[0b1010]);
+        let value = to_value(raw, false);
+        assert!(value_matches(raw, &value, false));
+        assert!(!value_matches(raw, &Value::Logic(parse_logic_vector("1011").unwrap()), false));
+        assert!(!value_matches(raw, &Value::Logic(parse_logic_vector("01010").unwrap()), false), "width differs");
+        assert!(!value_matches(raw, &Value::Text("1010".to_string()), false), "kind differs");
+
+        let time = SignalValueRef::String("7 NS");
+        assert!(value_matches(time, &Value::Text("7 ns".to_string()), true));
+        assert!(value_matches(SignalValueRef::String("idle"), &Value::Text("idle".to_string()), false));
+        assert!(!value_matches(SignalValueRef::Real(f64::NAN), &Value::Real(f64::NAN), false));
     }
 
     #[test]

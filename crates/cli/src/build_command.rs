@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 use nvc::{CancelToken, locate_nvc};
-use project::{BuildEvent, BuildPlan, Project, plan_build, run_build};
+use project::{BuildEvent, BuildPlan, Project, TestbenchConfig, plan_build, run_build, run_testbench};
 
 use nvc::format_item;
 
@@ -23,6 +23,11 @@ pub struct BuildArgs {
     /// Only show the compile order and what would be compiled.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// After a successful build, run this testbench (its `name`, or its
+    /// `top` entity) and report where its waveform was saved.
+    #[arg(long, value_name = "TESTBENCH")]
+    pub run: Option<String>,
 
     /// Path to the nvc program. Default: search PATH.
     #[arg(long)]
@@ -70,20 +75,60 @@ pub fn run(args: BuildArgs) -> ExitCode {
             println!("{text}");
         }
     };
-    match run_build(&project, &plan, &install, &CancelToken::new(), &mut print) {
+    let built = match run_build(&project, &plan, &install, &CancelToken::new(), &mut print) {
         Ok(summary) => {
             println!("{summary}");
-            if summary.succeeded() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
+            summary.succeeded()
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            false
+        }
+    };
+    if !built {
+        return ExitCode::FAILURE;
+    }
+    match &args.run {
+        Some(name) => run_one_testbench(&project, &plan, &install, name, &mut print),
+        None => ExitCode::SUCCESS,
+    }
+}
+
+/// Elaborates and runs the testbench called `name`, printing its output.
+fn run_one_testbench(
+    project: &Project,
+    plan: &BuildPlan,
+    install: &nvc::NvcInstall,
+    name: &str,
+    print: &mut dyn FnMut(BuildEvent),
+) -> ExitCode {
+    let Some(testbench) = find_testbench(&project.config.testbenches, name) else {
+        let known: Vec<&str> = project.config.testbenches.iter().map(|tb| tb.display_name()).collect();
+        eprintln!("error: no testbench '{name}' in the project. Known: {}", known.join(", "));
+        return ExitCode::FAILURE;
+    };
+    match run_testbench(project, plan, testbench, install, &CancelToken::new(), print) {
+        Ok(outcome) => {
+            if let Some(file) = &outcome.wave_file {
+                println!("Waveform: {}", file.display());
             }
+            let result = if outcome.passed() { "PASSED" } else { "FAILED" };
+            println!("{} {result}", testbench.display_name());
+            if outcome.passed() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
         Err(error) => {
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// The testbench whose display name or top entity is `name` (ignoring case).
+fn find_testbench<'a>(testbenches: &'a [TestbenchConfig], name: &str) -> Option<&'a TestbenchConfig> {
+    testbenches
+        .iter()
+        .find(|tb| tb.display_name().eq_ignore_ascii_case(name))
+        .or_else(|| testbenches.iter().find(|tb| tb.top.eq_ignore_ascii_case(name)))
 }
 
 /// The compile order, one numbered line per file, e.g.
@@ -156,6 +201,17 @@ mod tests {
             cancelled: false,
             duration: Duration::ZERO,
         }
+    }
+
+    #[test]
+    fn finds_testbenches_by_name_or_top() {
+        let mut fast = TestbenchConfig::new("uart_rx_tb");
+        fast.name = Some("rx fast".to_string());
+        let testbenches = [TestbenchConfig::new("uart_tx_tb"), fast];
+        assert_eq!(find_testbench(&testbenches, "UART_TX_TB").unwrap().top, "uart_tx_tb");
+        assert_eq!(find_testbench(&testbenches, "rx fast").unwrap().top, "uart_rx_tb");
+        assert_eq!(find_testbench(&testbenches, "uart_rx_tb").unwrap().top, "uart_rx_tb");
+        assert!(find_testbench(&testbenches, "nope").is_none());
     }
 
     #[test]

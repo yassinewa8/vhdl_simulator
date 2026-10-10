@@ -139,6 +139,9 @@ fn build_and_run(
     let name = testbench.display_name();
     match run_testbench(project, &plan, testbench, nvc, cancel, &mut |event| send(WorkerMessage::Event(event))) {
         Ok(outcome) => {
+            if let Some(file) = &outcome.wave_file {
+                send(WorkerMessage::Line(format!("Waveform: {}", file.display())));
+            }
             let cancelled = outcome.reports.iter().any(|report| report.process.cancelled);
             let result = if cancelled {
                 "STOPPED"

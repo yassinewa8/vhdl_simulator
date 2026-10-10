@@ -57,6 +57,19 @@ impl Project {
         self.config.project.output_dir.join(library.to_lowercase())
     }
 
+    /// Where a testbench's waveform goes, as nvc sees it (relative to
+    /// `root` unless the output folder is absolute):
+    /// `<output_dir>/waves/<name>.fst`. The name comes from the display
+    /// name, so two entries for one top with different generics don't
+    /// overwrite each other's waveforms.
+    pub fn wave_file(&self, testbench: &TestbenchConfig) -> PathBuf {
+        self.config
+            .project
+            .output_dir
+            .join("waves")
+            .join(format!("{}.fst", safe_file_name(testbench.display_name())))
+    }
+
     /// Where the build state is saved.
     pub fn state_file(&self) -> PathBuf {
         self.root.join(&self.config.project.output_dir).join(BUILD_STATE_FILE_NAME)
@@ -414,6 +427,8 @@ pub fn run_build(
 #[derive(Debug, Clone)]
 pub struct TestbenchOutcome {
     pub reports: Vec<StepReport>,
+    /// The waveform written by the run, if any (full path).
+    pub wave_file: Option<PathBuf>,
 }
 
 impl TestbenchOutcome {
@@ -447,6 +462,14 @@ pub fn run_testbench(
     nvc.options.extra_elaborate_args = testbench.elaborate_args.clone();
     nvc.options.extra_run_args = testbench.run_args.clone();
 
+    // nvc creates the waveform file but not the folder it goes in.
+    let wave_file = testbench.waves.then(|| project.wave_file(testbench));
+    if let Some(file) = &wave_file {
+        let folder = project.root.join(file.parent().unwrap_or(Path::new(".")));
+        std::fs::create_dir_all(&folder).map_err(|error| ProjectError::Io { path: folder, error })?;
+        nvc.options.extra_run_args.extend(testbench.wave_args.iter().cloned());
+    }
+
     let top = testbench.top.to_lowercase();
     let generics: Vec<(String, String)> = testbench
         .generics
@@ -455,7 +478,7 @@ pub fn run_testbench(
         .collect();
     let run_options = RunOptions {
         stop_time: testbench.stop_time,
-        wave_file: None, // waveforms arrive in Phase 3
+        wave_file: wave_file.clone(),
     };
     let io_error = |error| ProjectError::Io {
         path: install.program.clone(),
@@ -482,7 +505,19 @@ pub fn run_testbench(
             break;
         }
     }
-    Ok(TestbenchOutcome { reports })
+    // Only report the waveform if the run got far enough to write one.
+    let wave_file = wave_file
+        .map(|file| project.root.join(file))
+        .filter(|file| reports.len() == 2 && file.is_file());
+    Ok(TestbenchOutcome { reports, wave_file })
+}
+
+/// `name` with anything other than letters, digits, `_` and `-` replaced
+/// by `_`, so a display name such as "rx, fast baud" is a safe file name.
+fn safe_file_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect()
 }
 
 #[cfg(test)]
@@ -664,6 +699,15 @@ mod tests {
             ..ok
         };
         assert_eq!(cancelled.to_string(), "Build CANCELLED: 3 compiled, 2 up to date");
+    }
+
+    #[test]
+    fn wave_files_are_named_after_the_testbench() {
+        let (_dir, project) = two_library_project("wave_files_are_named_after_the_testbench");
+        let mut testbench = TestbenchConfig::new("uart_rx_tb");
+        assert_eq!(project.wave_file(&testbench), Path::new("build/waves").join("uart_rx_tb.fst"));
+        testbench.name = Some("rx, fast baud".to_string());
+        assert_eq!(project.wave_file(&testbench), Path::new("build/waves").join("rx__fast_baud.fst"));
     }
 
     #[test]

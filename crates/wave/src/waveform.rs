@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use studio_core::{CancelToken, SimTime, Value};
-use wellen::{Hierarchy, LoadOptions, ScopeRef, Signal, SignalEncoding, SignalRef, SignalSource, VarRef, viewers};
+use wellen::{Hierarchy, LoadOptions, ScopeRef, Signal, SignalEncoding, SignalRef, SignalSource, SignalValueRef, VarRef, viewers};
 
-use crate::convert::{ScopeKind, TickScale, femtoseconds_per_tick, to_value};
+use crate::convert::{ScopeKind, TickScale, femtoseconds_per_tick, to_value, value_matches};
 
 /// A scope (instance, block, process, record...) in the waveform tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -284,12 +284,22 @@ impl SignalView<'_> {
 
     /// The value the signal settles on at change number `change`.
     pub fn value(&self, change: usize) -> Value {
+        to_value(self.raw_value(change), self.is_vhdl_time)
+    }
+
+    /// True if the value at change number `change` is `target` (checked
+    /// in place, which is much faster than `value(change) == *target`).
+    pub fn value_is(&self, change: usize, target: &Value) -> bool {
+        value_matches(self.raw_value(change), target, self.is_vhdl_time)
+    }
+
+    fn raw_value(&self, change: usize) -> SignalValueRef<'_> {
         let index = self.signal.time_indices()[change];
         let offset = self.signal.get_offset(index).expect("a change has data");
         // Several changes at the same time are delta cycles; the last
         // one is the value the signal settles on.
         let settled = offset.elements - 1;
-        to_value(self.signal.get_value_at(&offset, settled), self.is_vhdl_time)
+        self.signal.get_value_at(&offset, settled)
     }
 
     /// How many changes happen strictly before `time` (binary search).

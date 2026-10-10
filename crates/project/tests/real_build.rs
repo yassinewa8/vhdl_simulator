@@ -111,6 +111,20 @@ fn builds_in_dependency_order_and_runs_the_testbench() {
     assert!(outcome.passed(), "{outcome:?}");
     // OFFSET = 5 from project.toml: 2 * 10 + 5.
     assert_eq!(messages, ["y = 25"]);
+
+    // Runs write an FST waveform by default.
+    let wave_file = outcome.wave_file.expect("a waveform");
+    assert_eq!(wave_file, project.root.join("build").join("waves").join("top_tb.fst"));
+    assert!(std::fs::metadata(&wave_file).unwrap().len() > 0);
+
+    // ...unless switched off.
+    let mut quiet = testbench.clone();
+    quiet.name = Some("quiet".to_string());
+    quiet.waves = false;
+    let outcome = run_testbench(&project, &plan, &quiet, &install, &CancelToken::new(), &mut |_| {}).unwrap();
+    assert!(outcome.passed());
+    assert_eq!(outcome.wave_file, None);
+    assert!(!project.root.join("build/waves/quiet.fst").exists());
 }
 
 #[test]

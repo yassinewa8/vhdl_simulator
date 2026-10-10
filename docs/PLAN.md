@@ -114,3 +114,11 @@ Append new decisions at the bottom: date, what was decided, and why.
   benchmark shows it's needed.
 - **2026-10-10: Benchmarks are an on-demand timing program**, not the
   `criterion` crate, to avoid a large set of extra dependencies.
+- **2026-10-10: `cli build --run <testbench>`** builds, then runs one
+  testbench and reports its waveform. Added early (rather than waiting for
+  Phase 6's `cli test`) so realistic waveforms can be made headlessly by
+  `scripts/real-waveforms.sh`.
+- **2026-10-10: Stand-ins for "your largest real waveform"** until one is
+  available: UVVM's UART demo (built through our project system) and
+  OSVVM's AXI4 demo tests (through OSVVM's scripts), both made by
+  `scripts/real-waveforms.sh`, plus the generated benchmark waveform.

@@ -111,12 +111,14 @@ impl Waveform {
     /// The first time strictly after `time` that the signal becomes
     /// `value`. Values must match exactly (`H` is not `1`).
     ///
-    /// Unlike the other queries this looks at each change in turn, so on a
-    /// busy signal it can take a while if the value is far away.
+    /// Unlike the other queries this looks at each change in turn (in
+    /// place, without copying values), so it's slower on a busy signal
+    /// when the value is far away: up to about 0.4 s per 10 million changes
+    /// (measured with `cargo run --release -p wave --example bench`).
     pub fn next_equal(&self, id: SignalId, time: SimTime, value: &Value) -> Option<SimTime> {
         let view = self.view(id)?;
         (view.count_up_to(time)..view.len())
-            .find(|&change| view.value(change) == *value)
+            .find(|&change| view.value_is(change, value))
             .map(|change| view.time(change))
     }
 
@@ -125,7 +127,7 @@ impl Waveform {
         let view = self.view(id)?;
         (0..view.count_before(time))
             .rev()
-            .find(|&change| view.value(change) == *value)
+            .find(|&change| view.value_is(change, value))
             .map(|change| view.time(change))
     }
 }

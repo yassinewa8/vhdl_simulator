@@ -363,6 +363,8 @@ mod tests {
         assert!(outcome.succeeded, "{:#?}", state.session.log);
         assert_eq!(outcome.summary, "top_tb PASSED");
         assert!(state.session.log.iter().any(|line| line.text.contains("y = 25")));
+        let wave_line = state.session.log.iter().find(|line| line.text.starts_with("Waveform: "));
+        assert!(wave_line.unwrap().text.ends_with("top_tb.fst"), "{:#?}", state.session.log);
         // The plan was refreshed after the build: nothing left to compile.
         let plan = state.open.as_ref().unwrap().plan.as_ref().unwrap();
         assert_eq!(plan.compile_count(), 0);
