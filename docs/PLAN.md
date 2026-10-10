@@ -8,9 +8,9 @@ progress and decisions. Update it at the end of each phase.
 
 | Phase | Goal | Status |
 |-------|------|--------|
-| 0 | Project setup: workspace, rules, CI, empty window | In progress |
-| 1 | NVC integration: run analyse/elaborate/run, stream output, cancel, parse diagnostics and report/assert output | Not started |
-| 2 | Project and libraries: `project.toml`, automatic compile order, incremental builds, OSVVM/UVVM install, first GUI screen | Not started |
+| 0 | Project setup: workspace, rules, CI, empty window | Done |
+| 1 | NVC integration: run analyse/elaborate/run, stream output, cancel, parse diagnostics and report/assert output | Done |
+| 2 | Project and libraries: `project.toml`, automatic compile order, incremental builds, OSVVM/UVVM install, first GUI screen | In progress |
 | 3 | Waveform engine: lazy FST/VCD loading, fast range queries, nine-value std_logic, radix formatting, benchmarks | Not started |
 | 4 | Waveform viewer UI: zoom/pan, std_logic colours, cursors, navigation, display options, saved layouts and auto-reload | Not started |
 | 5 | Source, diagnostics and hierarchy: source viewer, external editor, diagnostics panel, instance browser | Not started |
@@ -52,3 +52,21 @@ Append new decisions at the bottom: date, what was decided, and why.
 - **2026-10-09: Parser fixtures are real captured output** in
   `tests/fixtures/nvc/`, regenerated with `scripts/capture-nvc-fixtures.sh`
   after an NVC upgrade; `git diff` then shows any format change.
+- **2026-10-10: Compile order comes from our own small VHDL scanner**, not
+  the `vhdl_lang` crate. `nvc --print-deps` only works on files that are
+  already analysed, so it can't order a first build. The scanner still finds
+  units in files with syntax errors (so NVC reports the real error), adds no
+  dependency, and is easy to read. `vhdl_lang` (MPL-2.0) can still be
+  adopted in Phase 5 for go-to-declaration. Details in
+  `docs/phase2-design.md`.
+- **2026-10-10: `project.toml` schema accepted as proposed** in
+  `docs/phase2-design.md`: `[project]` (name, standard, output_dir,
+  analyse_args), `[[library]]` with files/globs, `[external]` search paths
+  and maps, `[[testbench]]` entries. Build state (content fingerprints)
+  lives in `<output_dir>/build-state.toml`.
+- **2026-10-10: OSVVM/UVVM are installed with `nvc --install`**, run as a
+  subprocess like every other nvc call. Tested for real with
+  `nvc --install osvvm` on the development machine.
+- **2026-10-10: `cli build` added in Phase 2**, so compile order can be
+  tried on real projects before the GUI exists. Phase 6 then only adds
+  `cli test` and `cli do`.
