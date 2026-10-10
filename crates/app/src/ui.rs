@@ -41,9 +41,18 @@ impl StudioApp {
         // Drop projects that have been deleted or moved since last time.
         saved.retain(|path| path.is_file());
         let mut state = AppState::new(RecentProjects::from_paths(saved));
+        // Background work asks egui to redraw when it has news.
+        let ctx = creation_context.egui_ctx.clone();
+        state.set_waker(move || ctx.request_repaint());
 
         if let Some(path) = project_to_open {
-            state.open_project(&path);
+            // A waveform file opens in the Waves tab; anything else is
+            // taken to be a project file or folder.
+            if is_waveform_file(&path) {
+                state.open_waveform(&path);
+            } else {
+                state.open_project(&path);
+            }
         } else if let Some(last) = state.recent.paths().first().cloned()
             && last.is_file()
         {
@@ -56,10 +65,14 @@ impl StudioApp {
         }
     }
 
-    /// Starts a job, with a wake-up that asks egui to redraw.
-    fn start(&mut self, ctx: &egui::Context, job: Job) {
-        let ctx = ctx.clone();
-        self.state.start_job(job, move || ctx.request_repaint());
+
+
+    /// Opens a waveform file dropped onto the window.
+    fn open_dropped_waveforms(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if let Some(path) = dropped.iter().find(|p| is_waveform_file(p)) {
+            self.state.open_waveform(path);
+        }
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
@@ -74,11 +87,10 @@ impl StudioApp {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| self.file_menu(ui));
-            ui.menu_button("Project", |ui| self.project_menu(ui, &ctx));
-            ui.menu_button("Libraries", |ui| self.libraries_menu(ui, &ctx));
+            ui.menu_button("Project", |ui| self.project_menu(ui));
+            ui.menu_button("Libraries", |ui| self.libraries_menu(ui));
         });
     }
 
@@ -97,6 +109,18 @@ impl StudioApp {
         {
             ui.close();
             self.state.open_project(&file);
+        }
+        if ui
+            .button("Open waveform…")
+            .on_hover_text("An FST, VCD or GHW file, e.g. from OSVVM or another simulator")
+            .clicked()
+            && let Some(file) = rfd::FileDialog::new()
+                .set_title("Open waveform")
+                .add_filter("Waveform", wave::SUPPORTED_EXTENSIONS)
+                .pick_file()
+        {
+            ui.close();
+            self.state.open_waveform(&file);
         }
         ui.menu_button("Recent projects", |ui| {
             if self.state.recent.paths().is_empty() {
@@ -119,11 +143,11 @@ impl StudioApp {
         }
     }
 
-    fn project_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn project_menu(&mut self, ui: &mut egui::Ui) {
         let can_build = self.state.open.is_some() && !self.state.is_busy();
         if ui.add_enabled(can_build, egui::Button::new("Build")).clicked() {
             ui.close();
-            self.start(ctx, Job::Build { force: false });
+            self.state.start_job(Job::Build { force: false });
         }
         if ui
             .add_enabled(can_build, egui::Button::new("Rebuild all"))
@@ -131,7 +155,7 @@ impl StudioApp {
             .clicked()
         {
             ui.close();
-            self.start(ctx, Job::Build { force: true });
+            self.state.start_job(Job::Build { force: true });
         }
         if ui.add_enabled(self.state.open.is_some(), egui::Button::new("Reload project file")).clicked() {
             ui.close();
@@ -139,7 +163,7 @@ impl StudioApp {
         }
     }
 
-    fn libraries_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn libraries_menu(&mut self, ui: &mut egui::Ui) {
         for (package, label) in LIBRARY_PACKAGES {
             let button = egui::Button::new(format!("Install {label}"));
             if ui
@@ -148,12 +172,9 @@ impl StudioApp {
                 .clicked()
             {
                 ui.close();
-                self.start(
-                    ctx,
-                    Job::Install {
-                        package: package.to_string(),
-                    },
-                );
+                self.state.start_job(Job::Install {
+                    package: package.to_string(),
+                });
             }
         }
         ui.separator();
@@ -168,7 +189,6 @@ impl StudioApp {
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
             self.testbench_picker(ui);
 
@@ -179,7 +199,7 @@ impl StudioApp {
                 .on_hover_text("Compile what changed, in dependency order")
                 .clicked()
             {
-                self.start(&ctx, Job::Build { force: false });
+                self.state.start_job(Job::Build { force: false });
             }
             let testbench = self.state.selected_testbench().cloned();
             if ui
@@ -188,7 +208,7 @@ impl StudioApp {
                 .clicked()
                 && let Some(testbench) = testbench
             {
-                self.start(&ctx, Job::Run { testbench });
+                self.state.start_job(Job::Run { testbench });
             }
             let stopping = self.state.job.as_ref().is_some_and(|job| job.is_stopping());
             let stop_hint = match &self.state.job {
@@ -320,6 +340,7 @@ impl StudioApp {
                 format!("Problems ({})", problems.len())
             };
             ui.selectable_value(&mut self.state.tab, MainTab::Problems, label);
+            ui.selectable_value(&mut self.state.tab, MainTab::Waves, "Waves");
             if self.state.tab == MainTab::Output {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("Clear").clicked() {
@@ -333,6 +354,7 @@ impl StudioApp {
         match self.state.tab {
             MainTab::Output => self.output_view(ui),
             MainTab::Problems => self.problems_view(ui),
+            MainTab::Waves => crate::wave_ui::waves_tab(ui, &mut self.state),
         }
     }
 
@@ -403,7 +425,8 @@ impl StudioApp {
 impl eframe::App for StudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.state.poll_job();
+        self.state.poll();
+        self.open_dropped_waveforms(&ctx);
         self.update_title(&ctx);
         // While a job runs, keep the spinner turning even between messages.
         if self.state.is_busy() {
@@ -470,6 +493,13 @@ fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// True for files with a waveform extension (.fst, .vcd, .ghw).
+fn is_waveform_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| wave::SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
 }
 
 /// Green that's readable on both light and dark backgrounds.

@@ -10,6 +10,9 @@
 mod recent;
 mod session;
 mod state;
+mod timeline;
+mod wave_state;
+mod wave_ui;
 mod ui;
 mod worker;
 
@@ -18,7 +21,8 @@ use std::path::PathBuf;
 use eframe::egui;
 
 fn main() -> eframe::Result {
-    // `app path/to/project.toml` (or a folder) opens that project.
+    // `app path/to/project.toml` (or a folder) opens that project;
+    // `app some.fst` opens a waveform.
     let project_to_open = std::env::args_os().nth(1).map(PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

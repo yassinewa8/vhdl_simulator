@@ -5,13 +5,19 @@
 //! these methods when buttons are clicked. That keeps the logic testable.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use nvc::{NvcInstall, default_library_dir, installed_libraries, locate_nvc};
 use project::{BuildPlan, PlannedFile, Project, ProjectError, TestbenchConfig, create_project, plan_build};
 
 use crate::recent::RecentProjects;
 use crate::session::{LogStyle, Session};
+use crate::wave_state::WaveState;
 use crate::worker::{Job, JobContext, RunningJob, WorkerMessage};
+
+/// Asks the window to redraw. Background work (builds, waveform loads)
+/// calls it from other threads whenever it has news.
+type Waker = Arc<dyn Fn() + Send + Sync>;
 
 /// An open project and its latest build plan (file order, what's stale).
 pub struct OpenProject {
@@ -25,6 +31,7 @@ pub struct OpenProject {
 pub enum MainTab {
     Output,
     Problems,
+    Waves,
 }
 
 /// Everything the window shows, and what it's doing.
@@ -42,6 +49,9 @@ pub struct AppState {
     pub tab: MainTab,
     /// Library folders in `~/.nvc/lib`, for the Libraries menu.
     pub installed: Vec<String>,
+    /// The Waves tab.
+    pub waves: WaveState,
+    waker: Waker,
 }
 
 impl AppState {
@@ -58,6 +68,8 @@ impl AppState {
             selected_problem: None,
             tab: MainTab::Output,
             installed: Vec::new(),
+            waves: WaveState::default(),
+            waker: Arc::new(|| {}),
         };
         state.refresh_installed();
         if let Err(message) = &state.nvc {
@@ -65,6 +77,31 @@ impl AppState {
             state.session.note(&message, LogStyle::Error);
         }
         state
+    }
+
+    /// Sets how background work asks the window to redraw (the window
+    /// passes egui's `request_repaint`).
+    pub fn set_waker(&mut self, wake: impl Fn() + Send + Sync + 'static) {
+        self.waker = Arc::new(wake);
+    }
+
+    fn wake_fn(&self) -> impl Fn() + Send + 'static {
+        let waker = self.waker.clone();
+        move || waker()
+    }
+
+    /// Opens a waveform file in the Waves tab.
+    pub fn open_waveform(&mut self, path: &Path) {
+        let wake = self.wake_fn();
+        self.waves.open(path, wake);
+        self.tab = MainTab::Waves;
+    }
+
+    /// Takes in everything that has arrived from background work. Call
+    /// once per frame.
+    pub fn poll(&mut self) {
+        self.poll_job();
+        self.waves.poll();
     }
 
     /// Opens a project from its `project.toml` (or the folder holding it).
@@ -162,7 +199,7 @@ impl AppState {
 
     /// Starts a job in the background. `wake` asks the window to redraw;
     /// it's called from the worker thread whenever there's news.
-    pub fn start_job(&mut self, job: Job, wake: impl Fn() + Send + 'static) {
+    pub fn start_job(&mut self, job: Job) {
         if self.is_busy() {
             return; // the buttons are disabled; this is just a safeguard
         }
@@ -180,7 +217,7 @@ impl AppState {
         self.session.begin_job(&job.description());
         self.selected_problem = None;
         self.tab = MainTab::Output;
-        self.job = Some(RunningJob::start(job, context, wake));
+        self.job = Some(RunningJob::start(job, context, self.wake_fn()));
     }
 
     pub fn stop_job(&self) {
@@ -190,21 +227,25 @@ impl AppState {
     }
 
     /// Takes in whatever the worker has sent. Call once per frame.
-    pub fn poll_job(&mut self) {
+    fn poll_job(&mut self) {
         let Some(job) = &self.job else { return };
-        let mut finished = false;
+        let mut finished = None;
         for message in job.take_messages() {
-            finished |= matches!(message, WorkerMessage::Finished(_));
+            if let WorkerMessage::Finished(outcome) = &message {
+                finished = Some(outcome.clone());
+            }
             self.session.handle(message);
         }
-        if finished {
-            self.job = None;
-            self.refresh_plan();
-            self.refresh_installed();
-            // After a failed build, show the errors straight away.
-            if self.session.error_count() > 0 {
-                self.tab = MainTab::Problems;
-            }
+        let Some(outcome) = finished else { return };
+        self.job = None;
+        self.refresh_plan();
+        self.refresh_installed();
+        if self.session.error_count() > 0 {
+            // After a failed build or run, show the errors straight away.
+            self.tab = MainTab::Problems;
+        } else if let (true, Some(wave_file)) = (outcome.succeeded, &outcome.wave_file) {
+            // After a successful run, show its waveform.
+            self.open_waveform(wave_file);
         }
     }
 
@@ -285,12 +326,13 @@ mod tests {
     /// woken until it's done.
     fn run_to_completion(state: &mut AppState, job: Job) {
         let (wake_sender, woken) = mpsc::channel();
-        state.start_job(job, move || {
+        state.set_waker(move || {
             let _ = wake_sender.send(());
         });
-        while state.is_busy() {
+        state.start_job(job);
+        while state.is_busy() || state.waves.is_opening() {
             woken.recv_timeout(Duration::from_secs(60)).expect("job took too long");
-            state.poll_job();
+            state.poll();
         }
     }
 
@@ -365,6 +407,9 @@ mod tests {
         assert!(state.session.log.iter().any(|line| line.text.contains("y = 25")));
         let wave_line = state.session.log.iter().find(|line| line.text.starts_with("Waveform: "));
         assert!(wave_line.unwrap().text.ends_with("top_tb.fst"), "{:#?}", state.session.log);
+        // The waveform opened in the Waves tab.
+        assert_eq!(state.tab, MainTab::Waves);
+        assert!(state.waves.wave.is_some(), "{:?}", state.waves.error);
         // The plan was refreshed after the build: nothing left to compile.
         let plan = state.open.as_ref().unwrap().plan.as_ref().unwrap();
         assert_eq!(plan.compile_count(), 0);

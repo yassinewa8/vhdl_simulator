@@ -301,6 +301,7 @@ mod tests {
             succeeded: true,
             cancelled: false,
             summary: "top_tb PASSED".to_string(),
+            wave_file: None,
         };
         session.handle(WorkerMessage::Finished(outcome.clone()));
         assert_eq!(session.progress, None);

@@ -9,6 +9,7 @@ publish.workspace = true
 studio-core.workspace = true
 nvc.workspace = true
 project.workspace = true
+wave.workspace = true
 eframe.workspace = true
 rfd.workspace = true
 

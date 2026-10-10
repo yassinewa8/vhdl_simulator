@@ -8,6 +8,7 @@
 //! Nothing here uses egui. The worker is told to "wake" the window with a
 //! plain callback, so `run_job` can be tested without a GUI.
 
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -56,6 +57,8 @@ pub struct JobOutcome {
     pub cancelled: bool,
     /// One line for the user, e.g. `Build OK: 3 compiled, 0 up to date`.
     pub summary: String,
+    /// The waveform a run wrote, if any.
+    pub wave_file: Option<PathBuf>,
 }
 
 impl JobOutcome {
@@ -64,6 +67,7 @@ impl JobOutcome {
             succeeded: false,
             cancelled: false,
             summary: summary.into(),
+            wave_file: None,
         }
     }
 }
@@ -115,6 +119,7 @@ fn build(
                 succeeded: summary.succeeded(),
                 cancelled: summary.cancelled,
                 summary: summary.to_string(),
+                wave_file: None,
             };
             let plan = summary.succeeded().then_some(plan);
             (outcome, plan)
@@ -154,6 +159,7 @@ fn build_and_run(
                 succeeded: outcome.passed(),
                 cancelled,
                 summary: format!("{name} {result}"),
+                wave_file: outcome.wave_file,
             }
         }
         Err(error) => JobOutcome::failed(error.to_string()),
@@ -180,6 +186,7 @@ fn install(package: &str, nvc: &NvcInstall, cancel: &CancelToken, send: &mut dyn
             } else {
                 format!("Install of {package} FAILED (see the output above)")
             },
+            wave_file: None,
         },
         Err(error) => JobOutcome::failed(error.to_string()),
     }
