@@ -10,8 +10,6 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,29 +21,9 @@ pub enum Stream {
     Stderr,
 }
 
-/// A flag that asks a running nvc process to stop.
-///
-/// Cloning gives another handle to the *same* flag, so one clone can be
-/// given to the runner and another kept by e.g. a Stop button.
-#[derive(Debug, Clone, Default)]
-pub struct CancelToken {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl CancelToken {
-    pub fn new() -> CancelToken {
-        CancelToken::default()
-    }
-
-    /// Asks the process to stop. Safe to call from any thread.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
-    }
-}
+/// The Stop flag. Lives in `studio-core` because the waveform loader uses
+/// it too; re-exported here so `nvc::CancelToken` keeps working.
+pub use studio_core::CancelToken;
 
 /// How a process finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,15 +158,6 @@ fn hide_console_window(_command: &mut Command) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cancel_token_clones_share_the_flag() {
-        let token = CancelToken::new();
-        let handle = token.clone();
-        assert!(!token.is_cancelled());
-        handle.cancel();
-        assert!(token.is_cancelled());
-    }
 
     #[test]
     fn succeeded_needs_exit_code_zero_and_no_cancel() {

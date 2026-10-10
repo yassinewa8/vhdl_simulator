@@ -6,15 +6,18 @@
 //!   the compiler and the simulator
 //! - [`Logic`], [`Value`]: std_logic's nine values and signal values
 //! - [`Radix`], [`format_value`]: showing values as binary, hex, decimal...
+//! - [`CancelToken`]: the Stop flag for background jobs
 //!
 //! Nothing here may depend on the GUI.
 
+mod cancel;
 mod diagnostic;
 mod radix;
 mod severity;
 mod time;
 mod value;
 
+pub use cancel::CancelToken;
 pub use diagnostic::{Diagnostic, Location, SimMessage};
 pub use severity::Severity;
 pub use radix::{Radix, default_radix, format_logic, format_value, format_vhdl_time};

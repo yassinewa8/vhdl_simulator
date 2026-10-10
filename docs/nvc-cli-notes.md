@@ -38,6 +38,23 @@ nvc [GLOBAL OPTIONS] COMMAND [COMMAND OPTIONS] [COMMAND [COMMAND OPTIONS]]...
   `** Fatal: ...: design unit was analysed using standard revision 2008 which
   is more recent that the currently selected standard 1993`.
 
+## Waveforms
+
+Checked 2026-10-10 (details and timings in `docs/phase3-design.md`).
+
+- `-r --wave=FILE` writes FST (default) or VCD (`--format=vcd`). Arrays of
+  composite types are left out unless `--dump-arrays` is given.
+- Each signal carries its VHDL type name; all nine std_logic values are
+  kept; enums, booleans and `time` are written as text (enum names in
+  lower case, time zero as `"0 HR"`); integers as 32-bit vectors; records
+  as scopes; timescale 1 fs.
+- **nvc writes the source file's absolute path into the waveform,
+  unquoted** (`$attrbegin misc 03 C:\some folder\tb.vhd 1 $end` in VCD).
+  If that path contains a space, VCD readers (wellen, and likely others)
+  can't open the file: `unexpected number of tokens for command
+  attribute`. FST files are fine. Worth reporting to nvc. Our wave crate
+  explains this in its error message.
+
 ## Installing libraries (`--install`)
 
 Checked 2026-10-10 with OSVVM 2025.06a on Windows 11.

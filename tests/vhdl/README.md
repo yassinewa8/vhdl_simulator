@@ -18,6 +18,9 @@ Current contents:
   kind of error each
 - `sim/messages_tb.vhd`: a report at every severity, then failed asserts
 - `sim/endless_tb.vhd`: never stops by itself; used to test Stop/cancel
+- `waves/resolution_tb.vhd`: two drivers through all 81 std_logic pairs;
+  the wave crate checks the result against the IEEE 1164 resolution table
+- `waves/types_tb.vhd`: one signal of each type the viewer must show
 - `projects/three_libs/`: a three-library project (`project.toml`) whose
   file names sort in the wrong order, for testing automatic compile order,
   incremental rebuilds and running a testbench from a project

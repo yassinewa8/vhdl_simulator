@@ -31,6 +31,7 @@ wave = { path = "crates/wave" }
 # "persistence" lets the app remember recent projects (adds ron: MIT OR Apache-2.0).
 eframe = { version = "0.36", features = ["persistence"] } # MIT OR Apache-2.0
 rfd = "0.17" # MIT; native open/save dialogs
+wellen = "0.25" # BSD-3-Clause; reads FST/VCD/GHW waveforms (Surfer's library)
 clap = { version = "4.6", features = ["derive"] } # MIT OR Apache-2.0
 serde = { version = "1", features = ["derive"] } # MIT OR Apache-2.0
 toml = "1" # MIT OR Apache-2.0
