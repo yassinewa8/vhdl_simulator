@@ -63,11 +63,26 @@ jobs:
 
       # NVC_REQUIRED makes the end-to-end tests fail (not skip) without nvc.
       # --no-fail-fast runs every crate's tests even after a failure, so
-      # one failing test can't hide others.
+      # one failing test can't hide others. The output is saved for the
+      # next step.
       - name: Test
-        run: cargo test --workspace --no-fail-fast
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --no-fail-fast 2>&1 | tee test-output.txt
         env:
           NVC_REQUIRED: "1"
+
+      # Turns failing test names and panic messages into one annotation,
+      # which shows on the run's summary page (and through GitHub's API)
+      # without opening the full log.
+      - name: Summarise failed tests
+        if: failure()
+        shell: bash
+        run: |
+          summary=$(grep -E "^---- .* stdout ----|panicked at|^  left:|^ right:|^error: test failed" test-output.txt | head -40 || true)
+          # %0A is a line break inside an annotation.
+          echo "::error title=Failed tests::${summary//$'\n'/%0A}"
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
