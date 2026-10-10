@@ -7,6 +7,7 @@
 //! - `recent`: the recent projects list
 //! - `ui`: drawing the window with egui
 
+mod cursors;
 mod recent;
 mod session;
 mod state;

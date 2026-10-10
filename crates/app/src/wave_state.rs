@@ -6,9 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
-use studio_core::{Radix, default_radix};
+use studio_core::{Radix, SimTime, default_radix};
 use wave::{BackgroundLoad, BackgroundOpen, SignalId, SignalKind, Waveform, open_in_background};
 
+use crate::cursors::Cursors;
 use crate::timeline::Timeline;
 
 /// A signal in the wave view.
@@ -48,6 +49,9 @@ pub struct WaveState {
     /// The time under the mouse, shown in the toolbar, already formatted
     /// to the precision of the current zoom.
     pub hover_time: Option<String>,
+    pub cursors: Cursors,
+    /// A time to centre the view on next frame (e.g. "go to marker").
+    pub centre_request: Option<SimTime>,
 }
 
 impl WaveState {
@@ -61,6 +65,7 @@ impl WaveState {
         self.signals.clear();
         self.selected = None;
         self.row_scroll = 0.0;
+        self.cursors = Cursors::default();
     }
 
     /// The file being opened or shown.

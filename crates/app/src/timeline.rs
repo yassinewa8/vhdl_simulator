@@ -79,6 +79,13 @@ impl Timeline {
         self.clamp_start();
     }
 
+    /// Moves the view so `time` is in the middle of a `width`-pixel area,
+    /// keeping the zoom.
+    pub fn centre_on(&mut self, time: SimTime, width: f32) {
+        self.start = time.femtoseconds as f64 - f64::from(width) / 2.0 * self.scale;
+        self.clamp_start();
+    }
+
     /// Moves the view by `pixels` (positive moves to later times).
     pub fn pan(&mut self, pixels: f32) {
         self.start += f64::from(pixels) * self.scale;
@@ -205,6 +212,14 @@ mod tests {
         assert_eq!(timeline.time_at(0.0), 1_000_000.0);
         timeline.pan(-1_000_000.0);
         assert_eq!(timeline.time_at(100.0), 0.0, "stops 100 px before zero");
+    }
+
+    #[test]
+    fn centre_on_keeps_the_zoom() {
+        let mut timeline = Timeline::default(); // 100 ps per pixel
+        timeline.centre_on(ns(500), 1000.0);
+        assert_eq!(timeline.x_of(ns(500)), 500.0);
+        assert_eq!(timeline.time_at(1.0) - timeline.time_at(0.0), 100_000.0);
     }
 
     #[test]
