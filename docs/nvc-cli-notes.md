@@ -38,6 +38,35 @@ nvc [GLOBAL OPTIONS] COMMAND [COMMAND OPTIONS] [COMMAND [COMMAND OPTIONS]]...
   `** Fatal: ...: design unit was analysed using standard revision 2008 which
   is more recent that the currently selected standard 1993`.
 
+## Installing libraries (`--install`)
+
+Checked 2026-10-10 with OSVVM 2025.06a on Windows 11.
+
+- `nvc --install PKG` runs `bash <prefix>/libexec/nvc/install-PKG.sh`,
+  finding `bash` on PATH. The package list is the `install-*.sh` file
+  names (fmf, icecube2, ise, libero, osvvm, quartus, uvvm, vivado, vunit,
+  xpm_vhdl); an unknown name prints that list.
+- **Bug on Windows (1.23.0): the script path isn't quoted.** With nvc in
+  `C:\Program Files\NVC`, bash gets `C:\Program` and fails with status
+  127. Without bash on PATH it fails with status -1. So we run the script
+  ourselves with bash (`nvc::install_package`), passing the path with `/`
+  separators (the scripts use `dirname "$BASH_SOURCE"`, which doesn't
+  understand `\`) and `NVC=<path to nvc>` so they use the same nvc.
+- Needs bash and git; OSVVM also needs `tclsh` with Tcllib's `fileutil`.
+  Git for Windows has all but Tcllib, but only through its launcher
+  `Git\bin\bash.exe` (sets `MSYSTEM=UCRT64` and PATH); `Git\usr\bin\bash.exe`
+  sees no git or tclsh. Tcllib can be supplied with `TCLLIBPATH`.
+- Sources are cloned to `~/.cache/nvc/<repo>-<tag>` and reused next time.
+  Libraries are compiled into `~/.nvc/lib` (`NVC_INSTALL_DEST` changes it).
+- OSVVM is compiled for 2008 and 2019 into folders like `OSVVM.08`,
+  `OSVVM.19`; UVVM likewise (`uvvm_util.08`). Install takes ~15 s.
+- **nvc searches `~/.nvc/lib` by default** (no `-L` needed), and picks the
+  `.08`/`.19` folder matching `--std`: a `.08`-only library is "not found"
+  with `--std=2019`.
+- OSVVM's `EndOfTestReports` fails outside OSVVM's own Tcl flow
+  (`failed to open OsvvmTemp_NVC/OsvvmRun.yml`); use `ReportAlerts`.
+  OSVVM's report lines go to **stdout**.
+
 ## Useful options
 
 | Step | Option | Meaning |

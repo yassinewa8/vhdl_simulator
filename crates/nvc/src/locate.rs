@@ -172,7 +172,7 @@ fn default_candidates() -> Vec<PathBuf> {
 }
 
 /// `file_name` inside each folder listed in a PATH-style variable.
-fn candidates_on_path(path_var: &std::ffi::OsStr, file_name: &str) -> Vec<PathBuf> {
+pub(crate) fn candidates_on_path(path_var: &std::ffi::OsStr, file_name: &str) -> Vec<PathBuf> {
     std::env::split_paths(path_var)
         .filter(|dir| !dir.as_os_str().is_empty())
         .map(|dir| dir.join(file_name))

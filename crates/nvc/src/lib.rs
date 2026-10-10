@@ -29,8 +29,10 @@
 //! - `diagnostics`: parse analyse/elaborate output
 //! - `sim_messages`: parse simulation output
 //! - `steps`: all of the above together, one method per step
+//! - `install`: installing OSVVM/UVVM etc. with nvc's install scripts
 
 mod diagnostics;
+mod install;
 mod locate;
 mod options;
 mod output;
@@ -39,9 +41,13 @@ mod sim_messages;
 mod steps;
 
 pub use diagnostics::{DiagnosticParser, parse_full_output};
+pub use install::{
+    Bash, InstallError, default_library_dir, default_tcllib_dir, find_bash, install_package,
+    installable_packages, installed_libraries, libexec_dir,
+};
 pub use locate::{LocateError, MINIMUM_VERSION, NvcInstall, Version, check_version, locate_nvc};
 pub use options::{Library, NvcOptions, RunOptions, VhdlStandard};
 pub use output::OutputItem;
-pub use runner::{CancelToken, ProcessResult, Stream, run_process};
+pub use runner::{CancelToken, ProcessResult, Stream, run_process, run_process_with_env};
 pub use sim_messages::{parse_compact_line, parse_compact_output};
 pub use steps::{Nvc, Step, StepReport};

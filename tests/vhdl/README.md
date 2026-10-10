@@ -21,6 +21,8 @@ Current contents:
 - `projects/three_libs/`: a three-library project (`project.toml`) whose
   file names sort in the wrong order, for testing automatic compile order,
   incremental rebuilds and running a testbench from a project
+- `projects/osvvm_tb/`: a parity block checked with OSVVM (random data,
+  `AffirmIfEqual`); needs OSVVM installed (`cli install osvvm`)
 
 After adding a design whose NVC output a parser test should check, add it
 to `scripts/capture-nvc-fixtures.sh` and re-run the script.

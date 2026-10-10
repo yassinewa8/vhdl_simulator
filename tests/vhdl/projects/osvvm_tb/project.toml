@@ -1,0 +1,14 @@
+# A small design checked with OSVVM, to test that a project can use a
+# library installed with `cli install osvvm` (or the GUI's Install menu).
+# OSVVM isn't listed here: nvc finds installed libraries in ~/.nvc/lib.
+
+[project]
+name = "osvvm_tb"
+
+[[library]]
+name = "work"
+files = ["src/*.vhd", "tb/*.vhd"]
+
+[[testbench]]
+top = "parity_tb"
+stop_time = "1 ms"

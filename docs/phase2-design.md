@@ -22,6 +22,9 @@ recorded in `docs/PLAN.md` (Decisions).
     On Windows they need bash, git and (for OSVVM) tclsh. This machine has
     them via MSYS2 (`/usr/bin/bash`, `/ucrt64/bin/git`, `/ucrt64/bin/tclsh`).
     Not yet tested whether this works when the GUI runs the install.
+    *Correction (step 3): these come from Git for Windows, not MSYS2, and
+    `nvc --install` itself is broken on Windows; see
+    `docs/nvc-cli-notes.md` and the Decisions in `docs/PLAN.md`.*
   - Sources are cloned to `~/.cache/nvc/<name>-<tag>` (OSVVM: OsvvmLibraries
     tag 2025.06a), compiled into `~/.nvc/lib` by default; `--dest=DIR`
     changes that.

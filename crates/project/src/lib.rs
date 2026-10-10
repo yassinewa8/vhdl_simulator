@@ -8,7 +8,8 @@
 //! - `state`: fingerprints of compiled files, for incremental builds
 //! - `build`: planning and running a build, and running testbenches
 //!
-//! Still to come in Phase 2: installing libraries with `nvc --install`.
+//! Installing OSVVM/UVVM lives in the `nvc` crate (`nvc::install_package`),
+//! since it runs scripts from the nvc installation.
 
 mod build;
 mod config;

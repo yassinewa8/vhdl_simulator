@@ -22,13 +22,18 @@ fn find_nvc_or_skip() -> Option<NvcInstall> {
     }
 }
 
-/// A fresh copy of the test project, so builds don't write into the repo.
-fn copy_of_three_libs(test_name: &str) -> Project {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/vhdl/projects/three_libs");
+/// A fresh copy of a test project from tests/vhdl/projects, so builds
+/// don't write into the repo.
+fn copy_of_project(name: &str, test_name: &str) -> Project {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/vhdl/projects").join(name);
     let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join(test_name);
     let _ = std::fs::remove_dir_all(&target);
     copy_folder(&source, &target);
     Project::load(&target).unwrap()
+}
+
+fn copy_of_three_libs(test_name: &str) -> Project {
+    copy_of_project("three_libs", test_name)
 }
 
 fn copy_folder(from: &Path, to: &Path) {
@@ -159,5 +164,46 @@ fn error_skips_dependents_but_builds_independent_files() {
     assert_eq!(
         compiled_files(&events),
         ["src/design_ctx.vhd", "src/a_top.vhd", "tb/top_tb.vhd"]
+    );
+}
+
+/// Needs OSVVM installed in ~/.nvc/lib (`cli install osvvm`). Skipped if
+/// it isn't, unless `OSVVM_REQUIRED` is set.
+#[test]
+fn project_using_installed_osvvm_builds_and_passes() {
+    let Some(install) = find_nvc_or_skip() else { return };
+    let osvvm_installed = nvc::default_library_dir().is_some_and(|dir| dir.join("OSVVM.08").is_dir());
+    if !osvvm_installed {
+        assert!(
+            std::env::var_os("OSVVM_REQUIRED").is_none(),
+            "OSVVM_REQUIRED is set but OSVVM isn't installed"
+        );
+        eprintln!("skipping: OSVVM is not installed (run `cli install osvvm`)");
+        return;
+    }
+    let project = copy_of_project("osvvm_tb", "project_using_installed_osvvm");
+
+    let (plan, summary, events) = build(&project, &install);
+    assert!(summary.succeeded(), "{events:#?}");
+
+    let mut text = Vec::new();
+    let outcome = run_testbench(
+        &project,
+        &plan,
+        &project.config.testbenches[0],
+        &install,
+        &CancelToken::new(),
+        &mut |event| {
+            if let BuildEvent::Output(OutputItem::Text(line)) = event {
+                text.push(line);
+            }
+        },
+    )
+    .unwrap();
+    assert!(outcome.passed(), "{outcome:?}");
+    // OSVVM's ReportAlerts summary, printed to stdout.
+    assert!(
+        text.iter().any(|line| line.contains("DONE   PASSED") && line.contains("Affirmations Checked: 100")),
+        "{text:#?}"
     );
 }

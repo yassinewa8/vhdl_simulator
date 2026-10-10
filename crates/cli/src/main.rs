@@ -3,9 +3,11 @@
 //! Commands:
 //! - `cli run <files...> --top <entity>`: analyse, elaborate and run
 //! - `cli build [project]`: compile a project in dependency order
+//! - `cli install [package]`: install OSVVM, UVVM etc., or list them
 
 mod build_command;
 mod format;
+mod install_command;
 mod run_command;
 
 use std::process::ExitCode;
@@ -30,12 +32,16 @@ enum Command {
     /// Compile a project from its project.toml, in dependency order,
     /// recompiling only what changed.
     Build(build_command::BuildArgs),
+    /// Install OSVVM, UVVM or vendor libraries with nvc's install scripts.
+    /// Without a package name, lists what can be installed.
+    Install(install_command::InstallArgs),
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Run(args) => run_command::run(args),
         Command::Build(args) => build_command::run(args),
+        Command::Install(args) => install_command::run(args),
     }
 }
 
@@ -83,6 +89,22 @@ mod tests {
         };
         assert_eq!(args.project, std::path::PathBuf::from("."));
         assert!(args.dry_run);
+    }
+
+    #[test]
+    fn parses_an_install_command() {
+        let cli = Cli::try_parse_from(["cli", "install", "osvvm", "--tcllib", "C:/tcllib"]).unwrap();
+        let Command::Install(args) = cli.command else {
+            panic!("expected an install command");
+        };
+        assert_eq!(args.package.as_deref(), Some("osvvm"));
+        assert_eq!(args.tcllib, Some(std::path::PathBuf::from("C:/tcllib")));
+
+        let cli = Cli::try_parse_from(["cli", "install"]).unwrap();
+        let Command::Install(args) = cli.command else {
+            panic!("expected an install command");
+        };
+        assert_eq!(args.package, None);
     }
 
     #[test]

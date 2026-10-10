@@ -77,3 +77,17 @@ Append new decisions at the bottom: date, what was decided, and why.
 - **2026-10-10: A failed file doesn't stop the whole build.** Files that
   need it (directly or indirectly) are skipped; independent files are still
   compiled, so every real error is reported in one build.
+- **2026-10-10: Libraries are installed by running nvc's own install
+  scripts with bash, not `nvc --install`.** nvc 1.23.0 doesn't quote the
+  script path on Windows, so `--install` fails whenever nvc is in
+  `C:\Program Files`. Running the same script ourselves (a subprocess, as
+  with nvc itself; nothing copied) works around it. bash is found
+  automatically: Git for Windows' launcher, then MSYS2, or `bash` on PATH
+  outside Windows. Worth reporting upstream to nvc.
+- **2026-10-10: Tcllib for the OSVVM install is supplied via `TCLLIBPATH`**
+  from `~/.cache/nvc-studio/tcllib/modules` (Tcllib 2.0, BSD-style Tcl
+  licence; downloaded by hand for now). How end users get it is a Phase 7
+  first-run wizard question.
+- **2026-10-10: Installed libraries stay in nvc's default `~/.nvc/lib`,**
+  which nvc searches automatically, so projects need no extra settings to
+  use OSVVM/UVVM.

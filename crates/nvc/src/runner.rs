@@ -6,6 +6,7 @@
 //! them to the caller's callback, and between lines it checks the cancel
 //! flag. If the flag is set, it kills the nvc process.
 
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -81,10 +82,24 @@ pub fn run_process(
     cancel: &CancelToken,
     on_line: &mut dyn FnMut(Stream, &str),
 ) -> std::io::Result<ProcessResult> {
+    run_process_with_env(program, args, &[], working_dir, cancel, on_line)
+}
+
+/// Like [`run_process`], but also sets environment variables for the
+/// process (on top of the ones it inherits from us).
+pub fn run_process_with_env(
+    program: &Path,
+    args: &[String],
+    env: &[(String, OsString)],
+    working_dir: &Path,
+    cancel: &CancelToken,
+    on_line: &mut dyn FnMut(Stream, &str),
+) -> std::io::Result<ProcessResult> {
     let start = Instant::now();
     let mut command = Command::new(program);
     command
         .args(args)
+        .envs(env.iter().map(|(name, value)| (name, value)))
         .current_dir(working_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
