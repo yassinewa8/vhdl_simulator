@@ -83,8 +83,11 @@ fn windows_bash_candidates(program_files: Option<&Path>, msys2_root: &Path, path
 /// The folder holding nvc's install scripts: `<prefix>/libexec/nvc`, where
 /// nvc itself is `<prefix>/bin/nvc`.
 pub fn libexec_dir(install: &NvcInstall) -> PathBuf {
-    let bin_dir = install.program.parent().unwrap_or(Path::new("."));
-    bin_dir.join("..").join("libexec").join("nvc")
+    // Take the parent of `bin` directly rather than writing `bin/..`:
+    // Linux only accepts `bin/..` if `bin` really exists, Windows doesn't
+    // care, and a test once passed on one and failed on the other.
+    let prefix = install.program.parent().and_then(Path::parent).unwrap_or(Path::new("."));
+    prefix.join("libexec").join("nvc")
 }
 
 /// Packages this nvc can install (`osvvm`, `uvvm`, `vivado`, ...), sorted.
@@ -256,7 +259,7 @@ mod tests {
     #[test]
     fn libexec_is_next_to_bin() {
         let install = fake_install(Path::new("C:/Program Files/NVC"));
-        let expected = Path::new("C:/Program Files/NVC/bin").join("..").join("libexec").join("nvc");
+        let expected = Path::new("C:/Program Files/NVC").join("libexec").join("nvc");
         assert_eq!(libexec_dir(&install), expected);
     }
 
