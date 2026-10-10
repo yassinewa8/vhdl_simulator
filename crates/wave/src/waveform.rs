@@ -235,15 +235,20 @@ impl Waveform {
     /// delta cycles at that time have settled. `None` if the signal isn't
     /// loaded or hasn't got a value yet.
     pub fn value_at(&self, id: SignalId, time: SimTime) -> Option<Value> {
-        let signal = self.loaded.get(&self.signal_ref(id))?;
-        let ticks = self.scale.to_ticks(time);
-        // Index of the last change time at or before `ticks`.
-        let index = self.time_table.partition_point(|&t| t <= ticks).checked_sub(1)?;
-        let offset = signal.get_offset(index as u32)?;
-        // Several changes at the same time are delta cycles; the last
-        // one is the value the signal settles on.
-        let last = offset.elements - 1;
-        Some(to_value(signal.get_value_at(&offset, last), self.is_vhdl_time(id)))
+        let view = self.view(id)?;
+        // The last change at or before `time`.
+        let change = view.count_up_to(time).checked_sub(1)?;
+        Some(view.value(change))
+    }
+
+    /// A loaded signal's changes, for the queries in `query.rs`.
+    pub(crate) fn view(&self, id: SignalId) -> Option<SignalView<'_>> {
+        Some(SignalView {
+            signal: self.loaded.get(&self.signal_ref(id))?,
+            time_table: &self.time_table,
+            scale: self.scale,
+            is_vhdl_time: self.is_vhdl_time(id),
+        })
     }
 
     fn signal_ref(&self, id: SignalId) -> SignalRef {
@@ -253,6 +258,54 @@ impl Waveform {
     fn is_vhdl_time(&self, id: SignalId) -> bool {
         let hierarchy = self.hierarchy();
         hierarchy[var_ref(id)].vhdl_type_name(hierarchy) == Some("TIME")
+    }
+}
+
+/// One loaded signal's list of changes. Change number `k` is the k-th
+/// time the signal changes (several delta-cycle changes at the same time
+/// count as one change, to the value they settle on).
+pub(crate) struct SignalView<'a> {
+    signal: &'a Signal,
+    time_table: &'a [u64],
+    scale: TickScale,
+    is_vhdl_time: bool,
+}
+
+impl SignalView<'_> {
+    /// How many changes there are.
+    pub fn len(&self) -> usize {
+        self.signal.time_indices().len()
+    }
+
+    pub fn time(&self, change: usize) -> SimTime {
+        let index = self.signal.time_indices()[change];
+        self.scale.to_time(self.time_table[index as usize])
+    }
+
+    /// The value the signal settles on at change number `change`.
+    pub fn value(&self, change: usize) -> Value {
+        let index = self.signal.time_indices()[change];
+        let offset = self.signal.get_offset(index).expect("a change has data");
+        // Several changes at the same time are delta cycles; the last
+        // one is the value the signal settles on.
+        let settled = offset.elements - 1;
+        to_value(self.signal.get_value_at(&offset, settled), self.is_vhdl_time)
+    }
+
+    /// How many changes happen strictly before `time` (binary search).
+    pub fn count_before(&self, time: SimTime) -> usize {
+        self.count_where(|change_time| change_time < time)
+    }
+
+    /// How many changes happen at or before `time` (binary search).
+    pub fn count_up_to(&self, time: SimTime) -> usize {
+        self.count_where(|change_time| change_time <= time)
+    }
+
+    fn count_where(&self, is_early: impl Fn(SimTime) -> bool) -> usize {
+        self.signal
+            .time_indices()
+            .partition_point(|&index| is_early(self.scale.to_time(self.time_table[index as usize])))
     }
 }
 

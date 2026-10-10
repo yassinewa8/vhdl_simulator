@@ -9,5 +9,9 @@ publish.workspace = true
 studio-core.workspace = true
 wellen.workspace = true
 
+[dev-dependencies]
+# Only to find nvc for tests that generate a big waveform.
+nvc.workspace = true
+
 [lints]
 workspace = true

@@ -3647,6 +3647,7 @@ dependencies = [
 name = "wave"
 version = "0.1.0"
 dependencies = [
+ "nvc",
  "studio-core",
  "wellen",
 ]

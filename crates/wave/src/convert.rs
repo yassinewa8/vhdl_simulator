@@ -67,11 +67,6 @@ impl TickScale {
     pub fn to_time(self, ticks: u64) -> SimTime {
         SimTime::from_femtoseconds(ticks.saturating_mul(self.femtoseconds_per_tick))
     }
-
-    /// The tick at or before `time` (times between ticks round down).
-    pub fn to_ticks(self, time: SimTime) -> u64 {
-        time.femtoseconds / self.femtoseconds_per_tick
-    }
 }
 
 /// Converts one value. `is_vhdl_time` tidies nvc's text for `time`
@@ -116,9 +111,6 @@ mod tests {
             femtoseconds_per_tick: 1_000,
         };
         assert_eq!(ps.to_time(15), SimTime::parse("15 ps").unwrap());
-        assert_eq!(ps.to_ticks(SimTime::parse("15 ps").unwrap()), 15);
-        // 15.5 ps falls between ticks: rounds down to tick 15.
-        assert_eq!(ps.to_ticks(SimTime::from_femtoseconds(15_500)), 15);
     }
 
     #[test]

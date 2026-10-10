@@ -21,6 +21,8 @@ Current contents:
 - `waves/resolution_tb.vhd`: two drivers through all 81 std_logic pairs;
   the wave crate checks the result against the IEEE 1164 resolution table
 - `waves/types_tb.vhd`: one signal of each type the viewer must show
+- `waves/clock_tb.vhd`: 5 ns clock and 8-bit counter; 1 ms gives 200,001
+  clock changes for testing queries on a busy signal
 - `projects/three_libs/`: a three-library project (`project.toml`) whose
   file names sort in the wrong order, for testing automatic compile order,
   incremental rebuilds and running a testbench from a project

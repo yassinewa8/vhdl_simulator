@@ -7,6 +7,8 @@
 //!
 //! Modules:
 //! - `waveform`: an open file, its tree, loaded signals, values
+//! - `query`: what the viewer asks each frame (changes in a window,
+//!   per-pixel summary, next/previous change or value)
 //! - `background`: opening and loading on a thread, with progress and Stop
 //! - `convert`: turning `wellen`'s types into ours
 //!
@@ -25,10 +27,12 @@
 
 mod background;
 mod convert;
+mod query;
 mod waveform;
 
 pub use background::{BackgroundLoad, BackgroundOpen, open_in_background};
 pub use convert::ScopeKind;
+pub use query::{Bucket, Change, Changes, Summary};
 pub use waveform::{ScopeId, ScopeInfo, SignalId, SignalInfo, SignalKind, WaveError, Waveform};
 
 /// Waveform file extensions we can open.
