@@ -50,8 +50,11 @@ pub struct WaveState {
     /// Set when a new waveform arrives: the view should zoom to fit once
     /// it knows how wide it is.
     pub needs_fit: bool,
-    /// The selected row.
+    /// The current row: where a Shift+click range starts, and the signal
+    /// navigation (next edge, find value) works on.
     pub selected: Option<RowRef>,
+    /// Every selected row (Ctrl+click adds, Shift+click selects a range).
+    pub selection: Vec<RowRef>,
     /// How far the signal list is scrolled down, in pixels.
     pub row_scroll: f32,
     /// Zoom asked for by a toolbar button, applied around the centre on
@@ -98,6 +101,7 @@ impl WaveState {
         self.error = None;
         self.list = SignalList::default();
         self.selected = None;
+        self.selection.clear();
         self.row_scroll = 0.0;
         self.cursors = Cursors::default();
         self.dragging = None;
@@ -176,7 +180,67 @@ impl WaveState {
     /// Removes a row (a group header removes the whole group).
     pub fn remove(&mut self, row: RowRef) {
         self.list.remove(row);
-        self.selected = None;
+        self.select_only(None);
+    }
+
+    /// A plain click: just this row (or nothing).
+    pub fn select_only(&mut self, row: Option<RowRef>) {
+        self.selected = row;
+        self.selection = row.into_iter().collect();
+    }
+
+    /// Ctrl+click: adds the row to the selection, or takes it out.
+    pub fn toggle_selected(&mut self, row: RowRef) {
+        if let Some(index) = self.selection.iter().position(|&r| r == row) {
+            self.selection.remove(index);
+            if self.selected == Some(row) {
+                self.selected = self.selection.last().copied();
+            }
+        } else {
+            self.selection.push(row);
+            self.selected = Some(row);
+        }
+    }
+
+    /// Shift+click: every row on screen from the current row to `row`.
+    pub fn select_range_to(&mut self, row: RowRef) {
+        let rows = self.list.rows();
+        let Some(anchor) = self.selected.and_then(|a| rows.iter().position(|&r| r == a)) else {
+            return self.select_only(Some(row));
+        };
+        let Some(end) = rows.iter().position(|&r| r == row) else { return };
+        let (from, to) = (anchor.min(end), anchor.max(end));
+        self.selection = rows[from..=to].to_vec();
+        // The anchor stays, so the range can be changed with another Shift+click.
+    }
+
+    pub fn is_selected(&self, row: RowRef) -> bool {
+        self.selection.contains(&row)
+    }
+
+    /// Puts the selected signals into a new group (Ctrl+G).
+    pub fn group_selection(&mut self) {
+        let header = self.list.group_rows(&self.selection);
+        self.select_only(header);
+    }
+
+    /// Removes every selected row (Delete).
+    pub fn remove_selection(&mut self) {
+        self.list.remove_rows(&self.selection);
+        self.select_only(None);
+    }
+
+    /// Moves the selected signals (or just `row`, if it isn't selected)
+    /// to `drop`, keeping the moved rows selected.
+    pub fn move_dragged(&mut self, row: RowRef, drop: Drop) {
+        if self.is_selected(row) && self.selection.len() > 1 {
+            let moved = self.list.move_rows(&self.selection, drop);
+            self.selected = moved.first().copied();
+            self.selection = moved;
+        } else {
+            let moved = self.list.apply_drop(row, drop);
+            self.select_only(moved);
+        }
     }
 
     /// (signals received, signals requested) across loads in progress,
@@ -428,6 +492,43 @@ mod tests {
         let divider = state.list.add_divider_after(None);
         state.selected = Some(divider);
         assert!(state.step_edge(true).unwrap_err().contains("select a signal"));
+    }
+
+    #[test]
+    fn selecting_several_rows() {
+        let mut state = types_with(&["types_tb.sl", "types_tb.bus8", "types_tb.snum", "types_tb.state"]);
+        let row = RowRef::top;
+        state.select_only(Some(row(1)));
+        state.select_range_to(row(3));
+        assert_eq!(state.selection, [row(1), row(2), row(3)]);
+        assert_eq!(state.selected, Some(row(1)), "the range starts from the current row");
+        state.select_range_to(row(0));
+        assert_eq!(state.selection, [row(0), row(1)]);
+
+        state.select_only(Some(row(0)));
+        state.toggle_selected(row(2));
+        assert!(state.is_selected(row(0)) && state.is_selected(row(2)) && !state.is_selected(row(1)));
+        assert_eq!(state.selected, Some(row(2)));
+        state.toggle_selected(row(2));
+        assert_eq!(state.selection, [row(0)]);
+        assert_eq!(state.selected, Some(row(0)));
+
+        // Group sl and snum, then move both signals out together.
+        state.toggle_selected(row(2));
+        state.group_selection();
+        let labels = |state: &WaveState| -> Vec<String> { state.list.signals().map(|s| s.label.clone()).collect() };
+        assert_eq!(labels(&state), ["sl", "snum", "bus8", "state"]);
+        assert_eq!(state.selected, Some(row(0)), "the new group's header is selected");
+
+        state.select_only(Some(RowRef { item: 0, child: Some(0) }));
+        state.toggle_selected(RowRef { item: 0, child: Some(1) });
+        state.move_dragged(RowRef { item: 0, child: Some(0) }, Drop::Before(None));
+        assert_eq!(labels(&state), ["bus8", "state", "sl", "snum"]);
+        assert_eq!(state.selection.len(), 2, "the moved rows stay selected");
+
+        state.remove_selection();
+        assert_eq!(labels(&state), ["bus8", "state"]);
+        assert!(state.selection.is_empty());
     }
 
     #[test]

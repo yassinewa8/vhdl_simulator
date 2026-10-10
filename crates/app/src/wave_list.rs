@@ -283,6 +283,156 @@ impl SignalList {
         Some(RowRef { item: group_item, child: Some(group.signals.len() - 1) })
     }
 
+    /// Where the signal `id` is in the list (also inside collapsed groups).
+    pub fn row_of(&self, id: SignalId) -> Option<RowRef> {
+        self.items.iter().enumerate().find_map(|(index, item)| match item {
+            Item::Signal(signal) if signal.id == id => Some(RowRef::top(index)),
+            Item::Group(group) => group
+                .signals
+                .iter()
+                .position(|signal| signal.id == id)
+                .map(|child| RowRef { item: index, child: Some(child) }),
+            _ => None,
+        })
+    }
+
+    /// The signals in `rows`, in on-screen order, by id. Signals are
+    /// tracked by id while moving several, because every removal shifts
+    /// the positions of the rows after it.
+    fn signal_ids_in_order(&self, rows: &[RowRef]) -> Vec<SignalId> {
+        let mut rows = rows.to_vec();
+        rows.sort_by_key(|row| (row.item, row.child.map_or(0, |c| c + 1)));
+        rows.dedup();
+        rows.iter().filter_map(|&row| self.signal(row)).map(|signal| signal.id).collect()
+    }
+
+    /// Takes the signal `id` out of the list.
+    fn take_signal(&mut self, id: SignalId) -> Option<DisplayedSignal> {
+        match self.take(self.row_of(id)?)? {
+            Taken::Signal(signal) => Some(signal),
+            Taken::Item(_) => None,
+        }
+    }
+
+    /// Puts `signal` just before `before` (inside its group, if `before`
+    /// is in one), or at the end. Returns its row.
+    fn insert_signal(&mut self, signal: DisplayedSignal, before: Option<RowRef>) -> RowRef {
+        match before {
+            Some(RowRef { item, child: Some(child) }) => {
+                if let Some(Item::Group(group)) = self.items.get_mut(item) {
+                    let child = child.min(group.signals.len());
+                    group.signals.insert(child, signal);
+                    return RowRef { item, child: Some(child) };
+                }
+                self.items.push(Item::Signal(signal));
+                RowRef::top(self.items.len() - 1)
+            }
+            Some(RowRef { item, child: None }) => {
+                let item = item.min(self.items.len());
+                self.items.insert(item, Item::Signal(signal));
+                RowRef::top(item)
+            }
+            None => {
+                self.items.push(Item::Signal(signal));
+                RowRef::top(self.items.len() - 1)
+            }
+        }
+    }
+
+    /// Puts the signals among `rows` into a new group, placed where the
+    /// first of them was (before its group, if it was in one). Other kinds
+    /// of rows are left alone. Returns the new group's header row.
+    pub fn group_rows(&mut self, rows: &[RowRef]) -> Option<RowRef> {
+        let ids = self.signal_ids_in_order(rows);
+        let first = self.row_of(*ids.first()?)?;
+        // Moved top-level signals before that spot shift it up.
+        let moved_before = ids
+            .iter()
+            .filter_map(|&id| self.row_of(id))
+            .filter(|row| row.child.is_none() && row.item < first.item)
+            .count();
+        let signals: Vec<DisplayedSignal> = ids.iter().filter_map(|&id| self.take_signal(id)).collect();
+        self.groups_made += 1;
+        let at = (first.item - moved_before).min(self.items.len());
+        self.items.insert(
+            at,
+            Item::Group(Group {
+                name: format!("Group {}", self.groups_made),
+                collapsed: false,
+                signals,
+            }),
+        );
+        Some(RowRef::top(at))
+    }
+
+    /// Removes several rows. Removing a group header removes its signals.
+    pub fn remove_rows(&mut self, rows: &[RowRef]) {
+        let mut rows = rows.to_vec();
+        rows.sort_by_key(|row| (row.item, row.child.map_or(0, |c| c + 1)));
+        rows.dedup();
+        // From the bottom up, so earlier positions stay valid; a group's
+        // signals go before its header.
+        for row in rows.into_iter().rev() {
+            self.remove(row);
+        }
+    }
+
+    /// Moves the signals among `rows` to `drop`, keeping their order (other
+    /// kinds of rows are left alone). Returns their new rows.
+    pub fn move_rows(&mut self, rows: &[RowRef], drop: Drop) -> Vec<RowRef> {
+        let ids = self.signal_ids_in_order(rows);
+        let mut moved = Vec::new();
+        match drop {
+            Drop::IntoGroup(mut group) => {
+                for id in ids {
+                    let Some(row) = self.row_of(id) else { continue };
+                    if let Some(new_row) = self.move_into_group(row, group) {
+                        group = new_row.item; // the group may have shifted up
+                        moved.push(new_row);
+                    }
+                }
+            }
+            Drop::Before(target) => {
+                // A landmark that isn't moving: the target row, or the first
+                // row after it that isn't one of the moving signals.
+                let rows_now = self.rows();
+                let start = target.and_then(|t| rows_now.iter().position(|&r| r == t)).unwrap_or(rows_now.len());
+                let landmark = rows_now[start..]
+                    .iter()
+                    .find(|&&row| self.signal(row).is_none_or(|signal| !ids.contains(&signal.id)))
+                    .copied();
+                // Remember it by identity: a signal by its id, a divider or
+                // group header by its position, corrected for the moved
+                // top-level signals above it.
+                let landmark_id = landmark.and_then(|row| self.signal(row)).map(|signal| signal.id);
+                let landmark_top = landmark.filter(|_| landmark_id.is_none()).map(|row| {
+                    let moved_above = ids
+                        .iter()
+                        .filter_map(|&id| self.row_of(id))
+                        .filter(|r| r.child.is_none() && r.item < row.item)
+                        .count();
+                    row.item - moved_above
+                });
+                let signals: Vec<DisplayedSignal> = ids.iter().filter_map(|&id| self.take_signal(id)).collect();
+                let mut before = match (landmark_id, landmark_top) {
+                    (Some(id), _) => self.row_of(id),
+                    (None, Some(item)) => Some(RowRef::top(item)),
+                    (None, None) => None,
+                };
+                for signal in signals {
+                    let row = self.insert_signal(signal, before);
+                    moved.push(row);
+                    // The landmark is now one further down.
+                    before = before.map(|b| match b.child {
+                        Some(child) => RowRef { item: b.item, child: Some(child + 1) },
+                        None => RowRef::top(b.item + 1),
+                    });
+                }
+            }
+        }
+        moved
+    }
+
     /// Takes a row out of the list.
     fn take(&mut self, row: RowRef) -> Option<Taken> {
         match row.child {
@@ -469,6 +619,58 @@ mod tests {
         assert_eq!(picture(&list), ["b", "[Group 1]", "  a", "c"]);
         list.apply_drop(RowRef::top(2), Drop::Before(Some(RowRef::top(0))));
         assert_eq!(picture(&list), ["c", "b", "[Group 1]", "  a"]);
+    }
+
+    #[test]
+    fn grouping_several_rows() {
+        let mut list = list_of(&["a", "b", "c", "d"]);
+        let header = list.group_rows(&[RowRef::top(3), RowRef::top(1)]).unwrap();
+        assert_eq!(header, RowRef::top(1), "where the first selected signal was");
+        assert_eq!(picture(&list), ["a", "[Group 1]", "  b", "  d", "c"]);
+
+        // Grouping signals that start inside a group puts the new group
+        // before that group.
+        list.group_rows(&[RowRef { item: 1, child: Some(1) }, RowRef::top(2)]);
+        assert_eq!(picture(&list), ["a", "[Group 2]", "  d", "  c", "[Group 1]", "  b"]);
+        assert!(list.group_rows(&[]).is_none());
+    }
+
+    #[test]
+    fn removing_several_rows() {
+        let mut list = list_of(&["a", "b", "c", "d"]);
+        list.group_rows(&[RowRef::top(1), RowRef::top(2)]);
+        // a, [Group 1], b, c, d
+        list.remove_rows(&[RowRef::top(0), RowRef { item: 1, child: Some(1) }, RowRef::top(2)]);
+        assert_eq!(picture(&list), ["[Group 1]", "  b"]);
+    }
+
+    #[test]
+    fn moving_several_rows_keeps_their_order() {
+        let mut list = list_of(&["a", "b", "c", "d", "e"]);
+        list.move_rows(&[RowRef::top(3), RowRef::top(1)], Drop::Before(Some(RowRef::top(0))));
+        assert_eq!(picture(&list), ["b", "d", "a", "c", "e"]);
+        list.move_rows(&[RowRef::top(0), RowRef::top(2)], Drop::Before(None));
+        assert_eq!(picture(&list), ["d", "c", "e", "b", "a"]);
+        // Aimed at one of the moving rows: they land before the next row.
+        let moved = list.move_rows(&[RowRef::top(1), RowRef::top(2)], Drop::Before(Some(RowRef::top(2))));
+        assert_eq!(picture(&list), ["d", "c", "e", "b", "a"]);
+        assert_eq!(moved, [RowRef::top(1), RowRef::top(2)]);
+    }
+
+    #[test]
+    fn moving_several_rows_into_and_around_groups() {
+        let mut list = list_of(&["a", "x", "b"]);
+        list.group_rows(&[RowRef::top(1)]);
+        // a, [Group 1], x, b
+        list.move_rows(&[RowRef::top(0), RowRef::top(2)], Drop::IntoGroup(1));
+        assert_eq!(picture(&list), ["[Group 1]", "  x", "  a", "  b"]);
+        // Two of them out again, before the group.
+        let rows = [RowRef { item: 0, child: Some(1) }, RowRef { item: 0, child: Some(2) }];
+        list.move_rows(&rows, Drop::Before(Some(RowRef::top(0))));
+        assert_eq!(picture(&list), ["a", "b", "[Group 1]", "  x"]);
+        // And before x, inside the group.
+        list.move_rows(&[RowRef::top(0), RowRef::top(1)], Drop::Before(Some(RowRef { item: 2, child: Some(0) })));
+        assert_eq!(picture(&list), ["[Group 1]", "  a", "  b", "  x"]);
     }
 
     #[test]

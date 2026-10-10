@@ -356,8 +356,9 @@ fn wave_canvas(ui: &mut egui::Ui, waves: &mut WaveState) -> Vec<SignalId> {
             break; // the rest are below the window
         }
         let row_rect = Rect::from_min_max(Pos2::new(rect.left(), top), Pos2::new(rect.right(), top + ROW_HEIGHT));
-        if waves.selected == Some(row) {
-            painter.rect_filled(row_rect, 0.0, visuals.selection.bg_fill.gamma_multiply(0.35));
+        if waves.is_selected(row) {
+            let strength = if waves.selected == Some(row) { 0.4 } else { 0.25 };
+            painter.rect_filled(row_rect, 0.0, visuals.selection.bg_fill.gamma_multiply(strength));
         }
         match waves.list.kind(row) {
             Some(RowKind::Signal { signal, in_group }) => {
@@ -588,6 +589,9 @@ fn row_at(waves: &WaveState, columns: &Columns, y: f32) -> Option<RowRef> {
 
 /// The right-click menu for the selected row.
 fn row_menu(ui: &mut egui::Ui, waves: &mut WaveState) {
+    if waves.selection.len() > 1 {
+        return several_rows_menu(ui, waves);
+    }
     let selected = waves.selected;
     let on_a_row = selected.and_then(|row| waves.list.kind(row)).is_some();
     match selected.and_then(|row| waves.list.kind(row)) {
@@ -639,6 +643,20 @@ fn row_menu(ui: &mut egui::Ui, waves: &mut WaveState) {
     }
     if ui.add_enabled(waves.cursors.secondary.is_some(), egui::Button::new("Clear second cursor")).clicked() {
         waves.cursors.secondary = None;
+        ui.close();
+    }
+}
+
+/// The menu when several rows are selected.
+fn several_rows_menu(ui: &mut egui::Ui, waves: &mut WaveState) {
+    let count = waves.selection.len();
+    ui.weak(format!("{count} rows selected"));
+    if ui.button(format!("Group {count} selected")).on_hover_text("Ctrl+G").clicked() {
+        waves.group_selection();
+        ui.close();
+    }
+    if ui.button(format!("Remove {count} selected")).on_hover_text("Delete").clicked() {
+        waves.remove_selection();
         ui.close();
     }
 }
@@ -728,42 +746,61 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
         && let Some(p) = response.interact_pointer_pos()
     {
         let row = row_at(waves, columns, p.y);
-        waves.selected = row;
+        let (ctrl, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
+        let in_waves = wave_area.contains(p);
+        // Ctrl+click adds to the selection; in the names, Shift+click
+        // selects a range (in the waves, Shift+click places cursor 2).
+        match row {
+            Some(row) if ctrl => waves.toggle_selected(row),
+            Some(row) if shift && !in_waves => waves.select_range_to(row),
+            _ if shift && in_waves => {}
+            _ => waves.select_only(row),
+        }
         // Clicking a group's name collapses or expands it.
         if let Some(row) = row
-            && !wave_area.contains(p)
+            && !in_waves
+            && !ctrl
+            && !shift
             && matches!(waves.list.kind(row), Some(RowKind::GroupHeader { .. }))
         {
             waves.list.toggle_collapsed(row.item);
         }
         let clicked = waves.timeline.time_at(p.x - wave_area.left());
-        if wave_area.contains(p) && clicked >= 0.0 {
+        if in_waves && clicked >= 0.0 && !ctrl {
             let time = snapped_time(waves, row, SimTime::from_femtoseconds(clicked as u64));
-            if ui.input(|i| i.modifiers.shift) {
+            if shift {
                 waves.cursors.secondary = Some(time);
             } else {
                 waves.cursors.primary = Some(time);
             }
         }
     }
-    // Right-clicking selects the row under the mouse, then opens its menu.
+    // Right-clicking a row outside the selection selects just that row;
+    // inside it, the selection stays (so the menu can act on all of it).
     if response.secondary_clicked()
         && let Some(p) = response.interact_pointer_pos()
     {
-        waves.selected = row_at(waves, columns, p.y);
+        let row = row_at(waves, columns, p.y);
+        if row.is_none_or(|row| !waves.is_selected(row)) {
+            waves.select_only(row);
+        }
     }
     response.context_menu(|ui| row_menu(ui, waves));
 
     if response.hovered() || response.has_focus() {
-        let (fit, delete, marker, left, right) = ui.input(|i| {
+        let (fit, delete, marker, left, right, group) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::F),
                 i.key_pressed(egui::Key::Delete),
-                i.key_pressed(egui::Key::M),
+                i.key_pressed(egui::Key::M) && !i.modifiers.command,
                 i.key_pressed(egui::Key::ArrowLeft),
                 i.key_pressed(egui::Key::ArrowRight),
+                i.modifiers.command && i.key_pressed(egui::Key::G),
             )
         });
+        if group {
+            waves.group_selection();
+        }
         if left {
             let _ = waves.step_edge(false);
         }
@@ -773,8 +810,8 @@ fn handle_mouse_and_keys(ui: &egui::Ui, response: &egui::Response, waves: &mut W
         if fit {
             waves.needs_fit = true;
         }
-        if delete && let Some(row) = waves.selected {
-            waves.remove(row);
+        if delete {
+            waves.remove_selection();
         }
         if marker && let Some(time) = waves.cursors.primary {
             waves.cursors.add_marker(time);
@@ -792,6 +829,11 @@ fn drag_rows(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveState, co
         && let Some(origin) = pressed_in_names
     {
         waves.row_drag = row_at(waves, columns, origin.y);
+        if let Some(row) = waves.row_drag
+            && !waves.is_selected(row)
+        {
+            waves.select_only(Some(row));
+        }
     }
     let Some(moving) = waves.row_drag else { return };
     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -801,7 +843,7 @@ fn drag_rows(ui: &egui::Ui, response: &egui::Response, waves: &mut WaveState, co
     }
     if response.drag_stopped() {
         if let Some(drop) = waves.row_drop.take() {
-            waves.selected = waves.list.apply_drop(moving, drop);
+            waves.move_dragged(moving, drop);
         }
         waves.row_drag = None;
     }
