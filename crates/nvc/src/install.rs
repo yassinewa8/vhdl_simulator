@@ -200,11 +200,23 @@ pub fn install_package(
 }
 
 /// Environment for the install script: bash's own settings, `NVC` so the
-/// scripts use this nvc (they fall back to `nvc` on PATH otherwise), and
-/// `TCLLIBPATH` if given.
+/// scripts use this nvc (they fall back to `nvc` on PATH otherwise), git
+/// line-ending settings (see below), and `TCLLIBPATH` if given.
 fn install_environment(install: &NvcInstall, bash: &Bash, tcllib_dir: Option<&Path>) -> Vec<(String, OsString)> {
     let mut env = bash.env.clone();
     env.push(("NVC".to_string(), OsString::from(forward_slashes(&install.program))));
+
+    // Git for Windows defaults to `core.autocrlf=true`, which clones text
+    // files with Windows line endings. The UVVM script reads file names from
+    // `compile_order.txt` without removing the trailing carriage return, so
+    // nvc is asked to open "types_pkg.vhd<CR>" and fails. Cloning with
+    // `core.autocrlf=false` keeps files exactly as in the repository. These
+    // variables set a git option for this process only; the user's own git
+    // configuration is untouched.
+    env.push(("GIT_CONFIG_COUNT".to_string(), OsString::from("1")));
+    env.push(("GIT_CONFIG_KEY_0".to_string(), OsString::from("core.autocrlf")));
+    env.push(("GIT_CONFIG_VALUE_0".to_string(), OsString::from("false")));
+
     if let Some(dir) = tcllib_dir {
         // TCLLIBPATH is a Tcl list, so braces keep a path with spaces whole.
         env.push(("TCLLIBPATH".to_string(), OsString::from(format!("{{{}}}", forward_slashes(dir)))));
@@ -320,12 +332,19 @@ mod tests {
             env: vec![("MSYSTEM".to_string(), OsString::from("UCRT64"))],
         };
         let env = install_environment(&install, &bash, Some(Path::new("C:\\Users\\me\\tcl lib")));
-        assert_eq!(env[0].0, "MSYSTEM");
-        assert_eq!(env[1].0, "NVC");
-        assert!(env[1].1.to_string_lossy().ends_with("/bin/nvc.exe"));
-        assert!(!env[1].1.to_string_lossy().contains('\\'));
-        assert_eq!(env[2], ("TCLLIBPATH".to_string(), OsString::from("{C:/Users/me/tcl lib}")));
+        let value = |name: &str| env.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone());
+        assert_eq!(env[0].0, "MSYSTEM", "bash's own settings come first");
+        let nvc = value("NVC").unwrap();
+        assert!(nvc.to_string_lossy().ends_with("/bin/nvc.exe"));
+        assert!(!nvc.to_string_lossy().contains('\\'));
+        assert_eq!(value("TCLLIBPATH"), Some(OsString::from("{C:/Users/me/tcl lib}")));
 
-        assert_eq!(install_environment(&install, &bash, None).len(), 2);
+        // git keeps repository line endings (see install_environment).
+        assert_eq!(value("GIT_CONFIG_COUNT"), Some(OsString::from("1")));
+        assert_eq!(value("GIT_CONFIG_KEY_0"), Some(OsString::from("core.autocrlf")));
+        assert_eq!(value("GIT_CONFIG_VALUE_0"), Some(OsString::from("false")));
+
+        let without_tcllib = install_environment(&install, &bash, None);
+        assert!(without_tcllib.iter().all(|(key, _)| key != "TCLLIBPATH"));
     }
 }

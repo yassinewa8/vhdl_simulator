@@ -56,6 +56,16 @@ Checked 2026-10-10 with OSVVM 2025.06a on Windows 11.
   Git for Windows has all but Tcllib, but only through its launcher
   `Git\bin\bash.exe` (sets `MSYSTEM=UCRT64` and PATH); `Git\usr\bin\bash.exe`
   sees no git or tclsh. Tcllib can be supplied with `TCLLIBPATH`.
+- **UVVM fails with Git for Windows' default `core.autocrlf=true`**: files
+  are cloned with CRLF line endings, and `install-uvvm.sh` reads
+  `compile_order.txt` without stripping `\r`, so nvc gets file names
+  ending in a carriage return (`** Fatal: opening ../src/types_pkg.vhd`,
+  then `: Invalid argument` on the next line). We set
+  `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false`
+  for the install process only. A download already cloned with CRLF must
+  be checked out again (or deleted) because the script reuses it. With
+  that, UVVM 2025.11.28 installs in ~20 s (48 library folders; one
+  harmless warning about a non-protected shared variable in UVVM's code).
 - Sources are cloned to `~/.cache/nvc/<repo>-<tag>` and reused next time.
   Libraries are compiled into `~/.nvc/lib` (`NVC_INSTALL_DEST` changes it).
 - OSVVM is compiled for 2008 and 2019 into folders like `OSVVM.08`,
