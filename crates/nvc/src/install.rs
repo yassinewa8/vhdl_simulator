@@ -303,6 +303,10 @@ mod tests {
         assert!(installed_libraries(&dir.join("missing")).is_empty());
     }
 
+    // Windows only: the paths contain `C:`, and on Linux `:` separates PATH
+    // entries, so they can't be put into a Linux PATH at all. (The code
+    // under test only runs on Windows anyway.)
+    #[cfg(windows)]
     #[test]
     fn windows_candidates_prefer_git_launcher_then_msys2() {
         let path = std::env::join_paths(["C:/Windows"]).unwrap();

@@ -62,8 +62,10 @@ jobs:
         run: cargo build --workspace --all-targets
 
       # NVC_REQUIRED makes the end-to-end tests fail (not skip) without nvc.
+      # --no-fail-fast runs every crate's tests even after a failure, so
+      # one failing test can't hide others.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
         env:
           NVC_REQUIRED: "1"
 
