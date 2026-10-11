@@ -8,6 +8,7 @@
 //! - `state`: fingerprints of compiled files, for incremental builds
 //! - `build`: planning and running a build, and running testbenches
 //! - `new_project`: a starting `project.toml` for a folder of VHDL files
+//! - `highlight`: splitting VHDL into coloured pieces for the editor
 //! - `edit`: changing `project.toml` in place, keeping the user's comments
 //!
 //! Installing OSVVM/UVVM lives in the `nvc` crate (`nvc::install_package`),
@@ -17,6 +18,7 @@ mod build;
 mod config;
 mod edit;
 mod files;
+mod highlight;
 mod new_project;
 mod order;
 mod scanner;
@@ -31,6 +33,7 @@ pub use build::{
     run_build, run_testbench,
 };
 pub use edit::remove_file;
+pub use highlight::{Span, TokenKind, highlight};
 pub use files::{FileList, SourceFile, find_source_files};
 pub use new_project::{DEFAULT_FILE_PATTERNS, create_project, default_config_for_folder};
 pub use order::{CycleError, Dependency, DependencyGraph, build_graph, compile_order};

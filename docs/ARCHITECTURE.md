@@ -12,10 +12,10 @@ Last updated 2026-10-10, at the end of Phase 4 (MVP built).
 - Phases 0–4 are built: project files with automatic compile order and
   incremental builds, OSVVM/UVVM install, a GUI to build/run with live
   output and problems, a waveform engine, and a full waveform viewer.
-- **Next is Phase 5** (source viewer, diagnostics, hierarchy) — see
-  `docs/reference/prompt-plan.md`. The plan recommends the user first uses
-  the tool on real work for a week or two and lists annoyances; ask for
-  that list before starting Phase 5.
+- **Phase 5 is in progress** (source, diagnostics, hierarchy) — see
+  `docs/reference/prompt-plan.md`. Step 1 (editor tabs with quick edits)
+  is done; the remaining items are error-to-line, external editor, source
+  watching, diagnostics filters and the instance browser.
 - Pending user checks for Phase 4: compare colours/values with Questa,
   and debug a real issue with the viewer.
 - The user's process: each phase starts with research and a short design
@@ -68,6 +68,7 @@ testable without a GUI. NVC is GPL: only ever run it as a process.
 |---|---|
 | `config.rs` | `ProjectConfig` (serde) = `project.toml` schema; checks with clear messages. |
 | `files.rs` | Expand `files` globs per library, minus the `exclude` list. |
+| `highlight.rs` | Splits VHDL into coloured pieces (keywords, types, comments, literals, numbers) for the editor; never fails on half-typed text. |
 | `edit.rs` | `remove_file`: edit project.toml in place with `toml_edit`, keeping comments. |
 | `scanner.rs` | Token-based VHDL scanner: units defined, names referenced. |
 | `order.rs` | Dependency graph, topological compile order, cycle reporting. |
@@ -96,6 +97,8 @@ Pattern: **logic in egui-free modules (tested), drawing in `ui.rs` /
 | `session.rs` | Output log, Problems list, progress line (from worker messages). |
 | `recent.rs` | Recent projects list (saved via eframe storage). |
 | `ui.rs` | Main window: menus, toolbar, project file tree, Output/Problems/Waves tabs. |
+| `editor.rs` | `Editors` / `OpenFile`: source files in tabs; modified?, save (keeps CRLF), non-UTF-8 → read-only, reload or warn when changed on disk, `find_next`. |
+| `editor_ui.rs` | Draws file tabs and the editor (line numbers, highlighting via `project::highlight` in egui's `FrameCache`, find bar, Ctrl+S/Ctrl+F/F3) and the "save changes?" dialog for tabs and window close. |
 | `wave_state.rs` | `WaveState`: open waveform, `list` of rows, selection, cursors, timeline, navigation (`step_edge`, `find_value`), tree search, layout autosave/reload/file watching. |
 | `wave_list.rs` | `SignalList`: rows = signals, dividers, one-level groups; move/group/remove (single and multiple rows), drop targets. Tracks signals by id when moving several. |
 | `timeline.rs` | Time↔pixel maths: zoom about a point, pan, fit, ruler ticks, pixel-precise time text. |
@@ -218,6 +221,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 - `toml_edit` stores the spaces/comments *before* an array item with that
   item, so a comment after `"a.vhd",` belongs to the next item. Removing an
   item must hand its prefix on (`edit.rs::remove_keeping_comments`).
+
+- egui may run a frame's UI twice (multi-pass layout, up to 2 passes),
+  and both passes see the same key presses. Anything a key press *does*
+  (not just draws) must happen once per frame: Find checks
+  `cumulative_frame_nr`.
+- A key that moves focus is still in the input for the widget that gets
+  focus. Enter in the find field selected a match in the editor, then the
+  same Enter replaced it with a line break. Consume such keys
+  (`consume_key`).
+- Test VHDL files are checked out with CRLF on Windows (git autocrlf), so
+  tests reading saved files must not assume `
+`.
+- `real_build::running_one_testbench_ignores_broken_files_it_does_not_need`
+  failed once (2026-10-11) right after GUI tests and passed in 13 reruns;
+  cause unknown. If it recurs, look at the reports it prints.
 
 ## 6. Ideas and loose ends noted along the way
 

@@ -13,7 +13,7 @@ progress and decisions. Update it at the end of each phase.
 | 2 | Project and libraries: `project.toml`, automatic compile order, incremental builds, OSVVM/UVVM install, first GUI screen | Done |
 | 3 | Waveform engine: lazy FST/VCD loading, fast range queries, nine-value std_logic, radix formatting, benchmarks | Done |
 | 4 | Waveform viewer UI: zoom/pan, std_logic colours, cursors, navigation, display options, saved layouts and auto-reload | Built; real-use checks pending (Questa comparison, a real debug session) |
-| 5 | Source, diagnostics and hierarchy: source viewer, external editor, diagnostics panel, instance browser | Not started |
+| 5 | Source, diagnostics and hierarchy: source viewer, external editor, diagnostics panel, instance browser | In progress: step 1 (editor tabs) done |
 | 6 | Scripting and settings: command layer, console, Tcl `.do` compatibility, headless `cli build`/`cli test`, themes | Not started |
 | 7 | Packaging and performance: installers, first-run wizard, profiling, robustness | Not started |
 | Later | Interactive debugging (VHPI plugin, needs licensing advice) and code coverage view | Not started |
@@ -163,3 +163,12 @@ Append new decisions at the bottom: date, what was decided, and why.
   `files`; one matched by a pattern goes into the library's new `exclude`
   list, so the pattern still picks up new files. project.toml is edited
   with `toml_edit` so the user's comments and layout are kept.
+- **2026-10-11: Phase 5 starts with editor tabs that allow quick edits**,
+  not the read-only viewer the original plan suggested (the user wants to
+  make small fixes without leaving the app). Double-click a file to open
+  it in a tab next to Output/Problems/Waves; typing, undo, find, Ctrl+S.
+  No autocomplete or refactoring: real editing stays in the user's editor
+  (an "Open in external editor" button comes later in Phase 5).
+- **2026-10-11: VHDL highlighting is our own small tokenizer**
+  (`project::highlight`), not syntect: no dependency, and syntect ships no
+  VHDL grammar anyway.

@@ -12,6 +12,7 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, RichText};
 use project::PlannedFile;
 
+use crate::editor_ui::{CloseRequest, FindBar};
 use crate::recent::RecentProjects;
 use crate::session::{LogStyle, Problem};
 use crate::state::{AppState, MainTab, files_by_library, same_file};
@@ -28,6 +29,11 @@ pub struct StudioApp {
     state: AppState,
     /// Last title sent to the window, so it's only updated on change.
     title: String,
+    /// A tab or the window waiting for "save your changes?".
+    close_request: Option<CloseRequest>,
+    /// The user answered that question for the window: let it close.
+    allow_close: bool,
+    find: FindBar,
 }
 
 impl StudioApp {
@@ -62,6 +68,9 @@ impl StudioApp {
         StudioApp {
             state,
             title: String::new(),
+            close_request: None,
+            allow_close: false,
+            find: FindBar::default(),
         }
     }
 
@@ -351,6 +360,7 @@ impl StudioApp {
 
         let busy = self.state.is_busy();
         let mut clicked: Option<PathBuf> = None;
+        let mut double_clicked: Option<PathBuf> = None;
         let mut remove: Option<(String, PathBuf)> = None;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for (library, files) in files_by_library(&open.project, plan) {
@@ -371,6 +381,9 @@ impl StudioApp {
                             if row.clicked() {
                                 clicked = Some(file.source.path.clone());
                             }
+                            if row.double_clicked() {
+                                double_clicked = Some(file.source.path.clone());
+                            }
                             row.context_menu(|ui| {
                                 // Not while building: the build is using the file list.
                                 if ui
@@ -389,6 +402,9 @@ impl StudioApp {
         if clicked.is_some() {
             self.state.selected_file = clicked;
         }
+        if let Some(path) = double_clicked {
+            self.state.open_source(&path);
+        }
         if let Some((library, path)) = remove {
             self.state.remove_file(&library, &path);
         }
@@ -405,6 +421,7 @@ impl StudioApp {
             };
             ui.selectable_value(&mut self.state.tab, MainTab::Problems, label);
             ui.selectable_value(&mut self.state.tab, MainTab::Waves, "Waves");
+            crate::editor_ui::tab_buttons(ui, &mut self.state, &mut self.close_request);
             if self.state.tab == MainTab::Output {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("Clear").clicked() {
@@ -419,6 +436,7 @@ impl StudioApp {
             MainTab::Output => self.output_view(ui),
             MainTab::Problems => self.problems_view(ui),
             MainTab::Waves => crate::wave_ui::waves_tab(ui, &mut self.state),
+            MainTab::Source => crate::editor_ui::editor_view(ui, &mut self.state, &mut self.find),
         }
     }
 
@@ -490,6 +508,14 @@ impl eframe::App for StudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.state.poll();
+        // Closing the window with unsaved edits: ask first.
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.allow_close
+            && self.state.editors.modified_count() > 0
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_request = Some(CloseRequest::Window);
+        }
         self.open_dropped_waveforms(&ctx);
         self.update_title(&ctx);
         // While a job runs, keep the spinner turning even between messages.
@@ -505,6 +531,7 @@ impl eframe::App for StudioApp {
             .default_size(280.0)
             .show(ui, |ui| self.file_panel(ui));
         egui::CentralPanel::default().show(ui, |ui| self.main_area(ui));
+        crate::editor_ui::unsaved_changes_dialog(&ctx, &mut self.state, &mut self.close_request, &mut self.allow_close);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -528,7 +555,7 @@ fn file_row(ui: &mut egui::Ui, file: &PlannedFile, selected: bool) -> egui::Resp
     let text = if file.needs_compile { format!("• {name}") } else { format!("   {name}") };
     let units: Vec<String> = file.units.iter().map(|unit| format!("{:?} {}", unit.kind, unit.name)).collect();
     let hover = format!(
-        "{}\n{}{}",
+        "{}  (double-click to edit)\n{}{}",
         file.source.path.display(),
         if file.needs_compile { "Needs compiling\n" } else { "" },
         units.join("\n")

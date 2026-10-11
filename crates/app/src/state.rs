@@ -12,6 +12,7 @@ use project::{BuildPlan, PlannedFile, Project, ProjectError, TestbenchConfig, cr
 
 use crate::recent::RecentProjects;
 use crate::session::{LogStyle, Session};
+use crate::editor::Editors;
 use crate::wave_state::WaveState;
 use crate::worker::{Job, JobContext, RunningJob, WorkerMessage};
 
@@ -32,6 +33,8 @@ pub enum MainTab {
     Output,
     Problems,
     Waves,
+    /// The source file in the active editor tab (`AppState::editors`).
+    Source,
 }
 
 /// Everything the window shows, and what it's doing.
@@ -51,6 +54,8 @@ pub struct AppState {
     pub installed: Vec<String>,
     /// The Waves tab.
     pub waves: WaveState,
+    /// Source files open in editor tabs.
+    pub editors: Editors,
     waker: Waker,
 }
 
@@ -69,6 +74,7 @@ impl AppState {
             tab: MainTab::Output,
             installed: Vec::new(),
             waves: WaveState::default(),
+            editors: Editors::default(),
             waker: Arc::new(|| {}),
         };
         state.refresh_installed();
@@ -125,6 +131,7 @@ impl AppState {
         self.waves.poll();
         let now = std::time::Instant::now();
         self.waves.autosave(now);
+        self.editors.check_disk(now);
         // While nvc runs it may be rewriting the file; the finished run
         // reloads it anyway.
         if !self.is_busy() {
@@ -230,6 +237,50 @@ impl AppState {
             }
             Err(error) => self.report_error(&error),
         }
+    }
+
+    /// Opens a source file in an editor tab and shows it. `path` may be
+    /// relative to the project folder, as in the file list.
+    pub fn open_source(&mut self, path: &Path) {
+        let full_path = match &self.open {
+            Some(open) if path.is_relative() => open.project.root.join(path),
+            _ => path.to_path_buf(),
+        };
+        match self.editors.open(&full_path) {
+            Ok(()) => self.tab = MainTab::Source,
+            Err(error) => {
+                self.session
+                    .note(&format!("Can't open {}: {error}", full_path.display()), LogStyle::Error);
+                self.tab = MainTab::Output;
+            }
+        }
+    }
+
+    /// Saves the file in editor tab `index`. The file list then shows it
+    /// needs compiling. If saving fails, the tab shows why; returns false.
+    pub fn save_source(&mut self, index: usize) -> bool {
+        let Some(file) = self.editors.files.get_mut(index) else { return false };
+        match file.save() {
+            Ok(()) => {
+                self.refresh_plan();
+                true
+            }
+            Err(error) => {
+                file.save_error = Some(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// Saves every editor tab with changes. False if any couldn't be saved.
+    pub fn save_all_sources(&mut self) -> bool {
+        let mut all_saved = true;
+        for index in 0..self.editors.files.len() {
+            if self.editors.files[index].is_modified() {
+                all_saved &= self.save_source(index);
+            }
+        }
+        all_saved
     }
 
     pub fn refresh_installed(&mut self) {
@@ -419,6 +470,41 @@ mod tests {
         let groups = files_by_library(&open.project, plan);
         let names: Vec<(&str, usize)> = groups.iter().map(|(name, files)| (*name, files.len())).collect();
         assert_eq!(names, [("tb_lib", 1), ("design_lib", 3), ("util_lib", 2)]);
+    }
+
+    #[test]
+    fn editing_a_file_and_saving_marks_it_for_compiling() {
+        let folder = copy_of_project("three_libs", "app_editing_a_file");
+        let mut state = AppState::new(RecentProjects::default());
+        state.open_project(&folder);
+        // Compile everything first, so nothing needs compiling.
+        let built = nvc_available(&state);
+        if built {
+            run_to_completion(&mut state, Job::Build { force: false });
+        }
+        let needs = |state: &AppState| state.planned_file(Path::new("src/b_adder.vhd")).unwrap().needs_compile;
+        if built {
+            assert!(!needs(&state));
+        }
+
+        state.open_source(Path::new("src/b_adder.vhd"));
+        assert_eq!(state.tab, MainTab::Source);
+        let file = state.editors.active_file().unwrap();
+        assert!(file.text.contains("entity"));
+        file.text.push_str("\n-- edited\n");
+        assert_eq!(state.editors.modified_count(), 1);
+
+        assert!(state.save_all_sources());
+        assert_eq!(state.editors.modified_count(), 0);
+        // (Saved with the file's own line ends, which depend on how git
+        // checked it out.)
+        let saved = std::fs::read_to_string(folder.join("src/b_adder.vhd")).unwrap();
+        assert!(saved.replace("\r\n", "\n").ends_with("-- edited\n"), "{saved:?}");
+        assert!(needs(&state), "the file list shows it needs compiling");
+
+        state.open_source(Path::new("src/no_such_file.vhd"));
+        assert_eq!(state.tab, MainTab::Output);
+        assert_eq!(state.session.log.last().unwrap().style, LogStyle::Error);
     }
 
     #[test]

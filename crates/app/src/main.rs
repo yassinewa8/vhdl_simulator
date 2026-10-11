@@ -8,6 +8,8 @@
 //! - `ui`: drawing the window with egui
 
 mod cursors;
+mod editor;
+mod editor_ui;
 mod layout;
 mod recent;
 mod session;
