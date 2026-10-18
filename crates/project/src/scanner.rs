@@ -32,6 +32,22 @@ pub struct ScannedFile {
     pub units: Vec<DesignUnit>,
     /// Names this file needs to be compiled after. Sorted, no duplicates.
     pub references: BTreeSet<Reference>,
+    /// Instances inside this file's architectures, in order, for the
+    /// design hierarchy.
+    pub instances: Vec<Instance>,
+}
+
+/// One instance in an architecture, such as `u_add : adder port map ...`
+/// or `dut : entity work.top`. Names are lower case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instance {
+    /// The entity whose architecture contains the instance.
+    pub parent: String,
+    /// The instance label, e.g. `u_add`.
+    pub label: String,
+    /// What it instantiates: `Selected` for `entity lib.name`,
+    /// `Unqualified` for a component (matched to the entity of that name).
+    pub target: Reference,
 }
 
 /// A design unit found in a file. Names are lower case, because VHDL
@@ -76,10 +92,27 @@ pub fn scan(source: &str) -> ScannedFile {
     let tokens = tokenize(source);
     let libraries = library_clause_names(&tokens);
     let mut result = ScannedFile::default();
+    // The entity whose architecture we're in, if any.
+    let mut inside: Option<String> = None;
 
     for i in 0..tokens.len() {
+        let units_before = result.units.len();
         find_design_unit(&tokens[i..], &mut result);
-        find_instantiation(&tokens[i..], &mut result);
+        if result.units.len() > units_before {
+            inside = match &result.units[units_before].kind {
+                UnitKind::Architecture { entity } => Some(entity.clone()),
+                _ => None,
+            };
+        }
+        if let Some((label, target)) = find_instantiation(&tokens[i..], &mut result)
+            && let Some(parent) = &inside
+        {
+            result.instances.push(Instance {
+                parent: parent.clone(),
+                label,
+                target,
+            });
+        }
         let follows_dot = i > 0 && tokens[i - 1] == Token::Symbol('.');
         if !follows_dot {
             find_selected_name(&tokens[i..], &libraries, &mut result);
@@ -135,22 +168,33 @@ fn find_design_unit(tokens: &[Token], result: &mut ScannedFile) {
     });
 }
 
-/// Looks for a component instantiation starting at the first token:
-/// `label : comp port map`, `label : comp generic map` or
-/// `label : component comp`.
-fn find_instantiation(tokens: &[Token], result: &mut ScannedFile) {
+/// Looks for an instantiation starting at the first token:
+/// `label : comp port map`, `label : comp generic map`,
+/// `label : component comp` or `label : entity lib.name`. Returns the
+/// label and what's instantiated.
+fn find_instantiation(tokens: &[Token], result: &mut ScannedFile) -> Option<(String, Reference)> {
     use Token::{Symbol, Word};
-    match tokens {
-        [Word(_), Symbol(':'), Word(kw), Word(name), ..] if kw == "component" => {
-            result.references.insert(Reference::Unqualified(name.clone()));
+    let (label, target) = match tokens {
+        [Word(label), Symbol(':'), Word(kw), Word(library), Symbol('.'), Word(name), ..] if kw == "entity" => {
+            // The selected-name rule adds the reference, if `library` is
+            // visible; here it's only needed for the hierarchy.
+            let target = Reference::Selected {
+                library: library.clone(),
+                unit: name.clone(),
+            };
+            return Some((label.clone(), target));
         }
-        [Word(_), Symbol(':'), Word(name), Word(port_or_generic), Word(map), ..]
+        [Word(label), Symbol(':'), Word(kw), Word(name), ..] if kw == "component" => (label, name),
+        [Word(label), Symbol(':'), Word(name), Word(port_or_generic), Word(map), ..]
             if (port_or_generic == "port" || port_or_generic == "generic") && map == "map" =>
         {
-            result.references.insert(Reference::Unqualified(name.clone()));
+            (label, name)
         }
-        _ => {}
-    }
+        _ => return None,
+    };
+    let target = Reference::Unqualified(target.clone());
+    result.references.insert(target.clone());
+    Some((label.clone(), target))
 }
 
 /// Looks for `lib.unit` starting at the first token, where `lib` is a
@@ -432,6 +476,39 @@ mod tests {
                 unqualified("top_tb"),
                 unqualified("uart_rx"),
                 unqualified("uart_tx"),
+            ]
+        );
+    }
+
+    #[test]
+    fn instances_know_their_label_and_parent() {
+        let found = scan(
+            "entity top_tb is end;
+             architecture tb of top_tb is begin
+               dut : entity work.top(rtl) port map (x => x);
+               u_mon : monitor port map (clk);
+             end;
+             entity top is end;
+             architecture rtl of top is begin
+               g : for i in 0 to 3 generate
+                 u_add : component adder port map (a);
+               end generate;
+             end;
+             package p is end;
+             -- not in an architecture: ignored
+             x : thing port map (y);",
+        );
+        let instances: Vec<(&str, &str, Reference)> = found
+            .instances
+            .iter()
+            .map(|i| (i.parent.as_str(), i.label.as_str(), i.target.clone()))
+            .collect();
+        assert_eq!(
+            instances,
+            [
+                ("top_tb", "dut", selected("work", "top")),
+                ("top_tb", "u_mon", unqualified("monitor")),
+                ("top", "u_add", unqualified("adder")),
             ]
         );
     }

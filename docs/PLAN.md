@@ -179,3 +179,10 @@ Append new decisions at the bottom: date, what was decided, and why.
   an entity named `*_tb`/`tb_*` adds a `[[testbench]]`; removing the file
   removes it (with its settings, e.g. generics). The dropdown only offers
   testbenches whose entity is in the project.
+- **2026-10-19: The left panel has a Files / Hierarchy toggle.** Hierarchy
+  shows each runnable testbench with the entities it instantiates below
+  it, worked out from the sources by the scanner (no simulation needed):
+  `label : entity (library)`. Things not defined in the project (vendor
+  primitives, OSVVM) show as "not in project". Double-click opens the
+  entity's file. (The Phase 5 "instance browser" from the waveform is
+  still to come; this is the source-side view.)

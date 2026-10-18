@@ -8,6 +8,7 @@
 //! - `state`: fingerprints of compiled files, for incremental builds
 //! - `build`: planning and running a build, and running testbenches
 //! - `new_project`: a starting `project.toml` for a folder of VHDL files
+//! - `hierarchy`: the design tree, testbench on top (from the sources)
 //! - `highlight`: splitting VHDL into coloured pieces for the editor
 //! - `edit`: changing `project.toml` in place, keeping the user's comments
 //!
@@ -18,6 +19,7 @@ mod build;
 mod config;
 mod edit;
 mod files;
+mod hierarchy;
 mod highlight;
 mod new_project;
 mod order;
@@ -33,11 +35,12 @@ pub use build::{
     run_build, run_testbench,
 };
 pub use edit::{add_files, add_testbenches, remove_file, remove_testbenches};
+pub use hierarchy::{HierarchyNode, design_hierarchy};
 pub use highlight::{Span, TokenKind, highlight};
 pub use files::{FileList, SourceFile, find_source_files};
 pub use new_project::{DEFAULT_FILE_PATTERNS, create_project, default_config_for_folder, looks_like_testbench};
 pub use order::{CycleError, Dependency, DependencyGraph, build_graph, compile_order};
-pub use scanner::{DesignUnit, Reference, ScannedFile, UnitKind, scan};
+pub use scanner::{DesignUnit, Instance, Reference, ScannedFile, UnitKind, scan};
 pub use state::{BUILD_STATE_FILE_NAME, BuildSettings, BuildState, fingerprint};
 
 /// File name of a project file at the root of a user's VHDL project.

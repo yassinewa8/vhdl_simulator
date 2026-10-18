@@ -68,9 +68,10 @@ testable without a GUI. NVC is GPL: only ever run it as a process.
 |---|---|
 | `config.rs` | `ProjectConfig` (serde) = `project.toml` schema; checks with clear messages. |
 | `files.rs` | Expand `files` globs per library, minus the `exclude` list. |
+| `hierarchy.rs` | `design_hierarchy(plan, top)`: tree of instances below a testbench, from the scanner's `instances` (label, parent entity, target). Architectures in separate files count; recursion is cut. |
 | `highlight.rs` | Splits VHDL into coloured pieces (keywords, types, comments, literals, numbers) for the editor; never fails on half-typed text. |
 | `edit.rs` | `remove_file`: edit project.toml in place with `toml_edit`, keeping comments. |
-| `scanner.rs` | Token-based VHDL scanner: units defined, names referenced. |
+| `scanner.rs` | Token-based VHDL scanner: units defined, names referenced, instances (label + which architecture they're in). |
 | `order.rs` | Dependency graph, topological compile order, cycle reporting. |
 | `state.rs` | Content fingerprints in `build/build-state.toml`; what needs recompiling. |
 | `build.rs` | `Project`, `plan_build`, `BuildPlan::limit_to` (only what a testbench needs; Run uses it), `run_build` (one nvc process per file), `run_testbench` (writes `build/waves/<tb>.fst`). |

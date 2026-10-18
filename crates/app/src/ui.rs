@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eframe::egui::{self, Color32, RichText};
-use project::PlannedFile;
+use project::{HierarchyNode, PlannedFile, design_hierarchy};
 
 use crate::editor_ui::{CloseRequest, FindBar};
 use crate::recent::RecentProjects;
@@ -34,6 +34,17 @@ pub struct StudioApp {
     /// The user answered that question for the window: let it close.
     allow_close: bool,
     find: FindBar,
+    /// What the left panel shows.
+    file_view: FileView,
+}
+
+/// The left panel's two views of the project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileView {
+    /// Files grouped by library, in compile order.
+    Files,
+    /// Each testbench with the entities it instantiates below it.
+    Hierarchy,
 }
 
 impl StudioApp {
@@ -71,6 +82,7 @@ impl StudioApp {
             close_request: None,
             allow_close: false,
             find: FindBar::default(),
+            file_view: FileView::Files,
         }
     }
 
@@ -394,6 +406,37 @@ impl StudioApp {
         if stale > 0 {
             ui.weak(format!("• {stale} file(s) need compiling"));
         }
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.file_view, FileView::Files, "Files")
+                .on_hover_text("Files by library, in compile order");
+            ui.selectable_value(&mut self.file_view, FileView::Hierarchy, "Hierarchy")
+                .on_hover_text("Each testbench, and the entities it instantiates below it");
+        });
+
+        if self.file_view == FileView::Hierarchy {
+            let trees: Vec<HierarchyNode> = self
+                .state
+                .runnable_testbenches()
+                .into_iter()
+                .filter_map(|index| design_hierarchy(plan, &open.project.config.testbenches[index].top))
+                .collect();
+            let mut picked = PickedFile::default();
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                if trees.is_empty() {
+                    ui.weak("No testbenches. Entities named *_tb or tb_* become testbenches when their file is added.");
+                }
+                for tree in &trees {
+                    hierarchy_node(ui, tree, egui::Id::new("hierarchy"), self.state.selected_file.as_deref(), &mut picked);
+                }
+            });
+            if picked.clicked.is_some() {
+                self.state.selected_file = picked.clicked;
+            }
+            if let Some(path) = picked.double_clicked {
+                self.state.open_source(&path);
+            }
+            return;
+        }
 
         let busy = self.state.is_busy();
         let mut clicked: Option<PathBuf> = None;
@@ -591,6 +634,76 @@ impl eframe::App for StudioApp {
         if let Some(job) = &self.state.job {
             job.stop_and_wait(Duration::from_secs(3));
         }
+    }
+}
+
+/// A file clicked or double-clicked in the hierarchy view.
+#[derive(Default)]
+struct PickedFile {
+    clicked: Option<PathBuf>,
+    double_clicked: Option<PathBuf>,
+}
+
+/// One block of the design hierarchy and, folded under it, its instances.
+/// Click selects the entity's file; double-click opens it.
+fn hierarchy_node(
+    ui: &mut egui::Ui,
+    node: &HierarchyNode,
+    parent_id: egui::Id,
+    selected_file: Option<&Path>,
+    picked: &mut PickedFile,
+) {
+    // Instance labels are unique within their parent, so this is too.
+    let id = parent_id.with((&node.label, &node.entity));
+    let name = if node.label.is_empty() {
+        node.entity.clone()
+    } else {
+        format!("{} : {}", node.label, node.entity)
+    };
+    let place = match (&node.found, &node.other_library) {
+        (Some((library, _)), _) => library.clone(),
+        (None, Some(library)) => format!("{library}, not in project"),
+        (None, None) => "not in project".to_string(),
+    };
+    let file = node.found.as_ref().map(|(_, file)| file);
+    let selected = file.is_some_and(|file| selected_file.is_some_and(|selected| same_file(selected, file)));
+
+    let mut header = |ui: &mut egui::Ui| {
+        let text = if node.found.is_some() { RichText::new(name.as_str()) } else { RichText::new(name.as_str()).weak() };
+        let hover = match file {
+            Some(file) => format!("{}  (double-click to edit)", file.display()),
+            None => "Not defined in this project's files (e.g. a vendor or OSVVM library), so there's no file to open"
+                .to_string(),
+        };
+        let row = ui.selectable_label(selected, text).on_hover_text(hover);
+        ui.weak(format!("({place})"));
+        if node.recursive {
+            ui.weak("(recursive)").on_hover_text("This entity is also above here, so its contents aren't repeated");
+        }
+        if let Some(file) = file {
+            if row.clicked() {
+                picked.clicked = Some(file.clone());
+            }
+            if row.double_clicked() {
+                picked.double_clicked = Some(file.clone());
+            }
+        }
+    };
+
+    if node.children.is_empty() {
+        // Line up with the names of nodes that have a fold arrow.
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().icon_width + ui.spacing().item_spacing.x);
+            header(ui);
+        });
+    } else {
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| header(ui))
+            .body(|ui| {
+                for child in &node.children {
+                    hierarchy_node(ui, child, id, selected_file, picked);
+                }
+            });
     }
 }
 

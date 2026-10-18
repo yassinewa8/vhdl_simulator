@@ -19,7 +19,7 @@ use nvc::{CancelToken, Library, Nvc, NvcInstall, NvcOptions, OutputItem, Process
 use crate::config::{ProjectConfig, ProjectError, TestbenchConfig};
 use crate::files::{SourceFile, find_source_files};
 use crate::order::{build_graph, compile_order};
-use crate::scanner::{DesignUnit, UnitKind, scan};
+use crate::scanner::{DesignUnit, Instance, UnitKind, scan};
 use crate::state::{BUILD_STATE_FILE_NAME, BuildSettings, BuildState, FileState, files_to_compile, fingerprint, state_key};
 
 /// A loaded project: its settings and where it lives.
@@ -121,6 +121,8 @@ pub struct PlannedFile {
     pub source: SourceFile,
     /// Design units the file defines, for showing in the GUI.
     pub units: Vec<DesignUnit>,
+    /// Instances in the file's architectures, for the design hierarchy.
+    pub instances: Vec<Instance>,
     /// Positions in [`BuildPlan::files`] of the files this one needs.
     /// Always earlier positions.
     pub needs: Vec<usize>,
@@ -283,6 +285,7 @@ pub fn plan_build(project: &Project, nvc_version: &str, force: bool) -> Result<B
         .map(|&index| PlannedFile {
             source: files[index].clone(),
             units: scans[index].units.clone(),
+            instances: scans[index].instances.clone(),
             needs: graph.dependencies[index].iter().map(|d| position[d.file]).collect(),
             fingerprint: fingerprints[index].clone(),
             needs_compile: needs_compile[index],
