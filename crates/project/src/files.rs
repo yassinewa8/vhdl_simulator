@@ -108,10 +108,7 @@ impl Exclusions {
     fn new(entries: &[String], problems: &mut Vec<String>) -> Exclusions {
         let mut patterns = Vec::new();
         for entry in entries {
-            let entry = crate::edit::normalise(entry);
-            // A plain path is a pattern that only matches itself.
-            let text = if is_glob_pattern(&entry) { entry.clone() } else { glob::Pattern::escape(&entry) };
-            match glob::Pattern::new(&text) {
+            match entry_pattern(entry) {
                 Ok(pattern) => patterns.push(pattern),
                 Err(error) => problems.push(format!("exclude: '{entry}' is not a valid pattern: {error}")),
             }
@@ -121,14 +118,30 @@ impl Exclusions {
 
     /// `path` is relative to the project folder, with `/` separators.
     fn matches(&self, path: &Path) -> bool {
-        // As when finding files, `*` doesn't reach into sub-folders.
-        let options = glob::MatchOptions {
-            require_literal_separator: true,
-            ..glob::MatchOptions::new()
-        };
         let path = path.to_string_lossy();
-        self.patterns.iter().any(|pattern| pattern.matches_with(&path, options))
+        self.patterns.iter().any(|pattern| pattern.matches_with(&path, MATCH_OPTIONS))
     }
+}
+
+/// As when finding files, `*` doesn't reach into sub-folders.
+const MATCH_OPTIONS: glob::MatchOptions = glob::MatchOptions {
+    case_sensitive: true,
+    require_literal_separator: true,
+    require_literal_leading_dot: false,
+};
+
+/// A `files` or `exclude` entry as a pattern. A plain path is a pattern
+/// that only matches itself.
+fn entry_pattern(entry: &str) -> Result<glob::Pattern, glob::PatternError> {
+    let entry = crate::edit::normalise(entry);
+    let text = if is_glob_pattern(&entry) { entry } else { glob::Pattern::escape(&entry) };
+    glob::Pattern::new(&text)
+}
+
+/// True if a `files` or `exclude` entry covers `path` (relative to the
+/// project folder, with `/` separators).
+pub(crate) fn entry_matches(entry: &str, path: &str) -> bool {
+    entry_pattern(entry).is_ok_and(|pattern| pattern.matches_with(path, MATCH_OPTIONS))
 }
 
 /// True if `entry` contains glob wildcards (`*`, `?` or `[`).

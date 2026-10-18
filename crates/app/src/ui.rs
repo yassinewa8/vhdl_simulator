@@ -170,6 +170,35 @@ impl StudioApp {
             ui.close();
             self.state.refresh_plan();
         }
+        ui.separator();
+        let libraries: Vec<String> = match &self.state.open {
+            Some(open) => open.project.config.libraries.iter().map(|library| library.name.clone()).collect(),
+            None => Vec::new(),
+        };
+        ui.add_enabled_ui(!libraries.is_empty() && !self.state.is_busy(), |ui| {
+            ui.menu_button("Add files to library", |ui| {
+                for library in &libraries {
+                    if ui.button(library).clicked() {
+                        ui.close();
+                        self.add_files_to(library);
+                    }
+                }
+            });
+        });
+    }
+
+    /// Asks for VHDL files and adds them to `library`.
+    fn add_files_to(&mut self, library: &str) {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(format!("Add files to library {library}"))
+            .add_filter("VHDL", &["vhd", "vhdl"])
+            .add_filter("All files", &["*"]);
+        if let Some(open) = &self.state.open {
+            dialog = dialog.set_directory(&open.project.root);
+        }
+        if let Some(files) = dialog.pick_files() {
+            self.state.add_files(library, &files);
+        }
     }
 
     fn libraries_menu(&mut self, ui: &mut egui::Ui) {
@@ -286,21 +315,29 @@ impl StudioApp {
     }
 
     fn testbench_picker(&mut self, ui: &mut egui::Ui) {
-        let names: Vec<String> = match &self.state.open {
-            Some(open) => open.project.config.testbenches.iter().map(|tb| tb.display_name().to_string()).collect(),
+        // Only testbenches whose entity is in the project (see
+        // `runnable_testbenches`), as (index, name).
+        let choices: Vec<(usize, String)> = match &self.state.open {
+            Some(open) => self
+                .state
+                .runnable_testbenches()
+                .into_iter()
+                .map(|index| (index, open.project.config.testbenches[index].display_name().to_string()))
+                .collect(),
             None => Vec::new(),
         };
-        let selected_text = names
-            .get(self.state.selected_testbench)
-            .cloned()
+        let selected_text = self
+            .state
+            .selected_testbench()
+            .map(|tb| tb.display_name().to_string())
             .unwrap_or_else(|| "(no testbenches)".to_string());
-        ui.add_enabled_ui(!names.is_empty() && !self.state.is_busy(), |ui| {
+        ui.add_enabled_ui(!choices.is_empty() && !self.state.is_busy(), |ui| {
             egui::ComboBox::from_id_salt("testbench")
                 .selected_text(selected_text)
                 .width(180.0)
                 .show_ui(ui, |ui| {
-                    for (index, name) in names.iter().enumerate() {
-                        ui.selectable_value(&mut self.state.selected_testbench, index, name);
+                    for (index, name) in &choices {
+                        ui.selectable_value(&mut self.state.selected_testbench, *index, name);
                     }
                 });
         });
@@ -362,9 +399,10 @@ impl StudioApp {
         let mut clicked: Option<PathBuf> = None;
         let mut double_clicked: Option<PathBuf> = None;
         let mut remove: Option<(String, PathBuf)> = None;
+        let mut add_to: Option<String> = None;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for (library, files) in files_by_library(&open.project, plan) {
-                egui::CollapsingHeader::new(RichText::new(library).strong())
+                let header = egui::CollapsingHeader::new(RichText::new(library).strong())
                     .id_salt(library)
                     .default_open(true)
                     .show(ui, |ui| {
@@ -397,6 +435,12 @@ impl StudioApp {
                             });
                         }
                     });
+                header.header_response.context_menu(|ui| {
+                    if ui.add_enabled(!busy, egui::Button::new("Add files…")).clicked() {
+                        add_to = Some(library.to_string());
+                        ui.close();
+                    }
+                });
             }
         });
         if clicked.is_some() {
@@ -407,6 +451,9 @@ impl StudioApp {
         }
         if let Some((library, path)) = remove {
             self.state.remove_file(&library, &path);
+        }
+        if let Some(library) = add_to {
+            self.add_files_to(&library);
         }
     }
 

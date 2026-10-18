@@ -32,10 +32,10 @@ pub use build::{
     BuildEvent, BuildPlan, BuildSummary, PlannedFile, Project, TestbenchOutcome, plan_build,
     run_build, run_testbench,
 };
-pub use edit::remove_file;
+pub use edit::{add_files, add_testbenches, remove_file, remove_testbenches};
 pub use highlight::{Span, TokenKind, highlight};
 pub use files::{FileList, SourceFile, find_source_files};
-pub use new_project::{DEFAULT_FILE_PATTERNS, create_project, default_config_for_folder};
+pub use new_project::{DEFAULT_FILE_PATTERNS, create_project, default_config_for_folder, looks_like_testbench};
 pub use order::{CycleError, Dependency, DependencyGraph, build_graph, compile_order};
 pub use scanner::{DesignUnit, Reference, ScannedFile, UnitKind, scan};
 pub use state::{BUILD_STATE_FILE_NAME, BuildSettings, BuildState, fingerprint};

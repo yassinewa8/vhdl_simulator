@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nvc::{NvcInstall, default_library_dir, installed_libraries, locate_nvc};
-use project::{BuildPlan, PlannedFile, Project, ProjectError, TestbenchConfig, create_project, plan_build};
+use project::{
+    BuildPlan, PlannedFile, Project, ProjectError, TestbenchConfig, UnitKind, create_project, looks_like_testbench,
+    plan_build, scan,
+};
 
 use crate::recent::RecentProjects;
 use crate::session::{LogStyle, Session};
@@ -210,10 +213,85 @@ impl AppState {
                 open.project = reloaded;
             }
             open.plan = plan_build(&open.project, &version, false).map_err(|error| error.to_string());
-            let testbench_count = open.project.config.testbenches.len();
-            if self.selected_testbench >= testbench_count {
-                self.selected_testbench = 0;
+        }
+        // Keep a testbench that can still run selected, else the first.
+        let runnable = self.runnable_testbenches();
+        if !runnable.contains(&self.selected_testbench) {
+            self.selected_testbench = runnable.first().copied().unwrap_or(0);
+        }
+    }
+
+    /// The testbenches (indexes into the project's list) whose entity is
+    /// in the project's files, so they can be run. Without a plan (e.g. a
+    /// circular dependency) all are offered and the build explains.
+    pub fn runnable_testbenches(&self) -> Vec<usize> {
+        let Some(open) = &self.open else { return Vec::new() };
+        let testbenches = &open.project.config.testbenches;
+        match &open.plan {
+            Ok(plan) => (0..testbenches.len())
+                .filter(|&index| plan.library_of(&testbenches[index].top).is_some())
+                .collect(),
+            Err(_) => (0..testbenches.len()).collect(),
+        }
+    }
+
+    /// Adds files to a library of the open project, keeping the comments
+    /// in project.toml. Entities in them named like testbenches (`*_tb`,
+    /// `tb_*`) are added to the testbench list.
+    pub fn add_files(&mut self, library: &str, paths: &[PathBuf]) {
+        let Some(open) = &self.open else { return };
+        let root = open.project.root.clone();
+        let project_file = open.project.file.clone();
+        let known_testbenches: Vec<String> =
+            open.project.config.testbenches.iter().map(|tb| tb.top.to_lowercase()).collect();
+
+        let mut entries = Vec::new();
+        let mut testbenches = Vec::new();
+        for path in paths {
+            let entry = project_entry(&root, path);
+            if let Some(existing) = self.planned_file(Path::new(&entry)) {
+                let message = if existing.source.library == library {
+                    format!("{entry} is already in library {library}")
+                } else {
+                    format!("{entry} is already in library {}; a file can only be in one", existing.source.library)
+                };
+                self.session.note(&message, LogStyle::Warning);
+                continue;
             }
+            // An unreadable file is still added; the build will say why.
+            if let Ok(bytes) = std::fs::read(path) {
+                for unit in scan(&String::from_utf8_lossy(&bytes)).units {
+                    let new = !known_testbenches.contains(&unit.name) && !testbenches.contains(&unit.name);
+                    if unit.kind == UnitKind::Entity && looks_like_testbench(&unit.name) && new {
+                        testbenches.push(unit.name);
+                    }
+                }
+            }
+            entries.push(entry);
+        }
+        if entries.is_empty() {
+            self.tab = MainTab::Output;
+            return;
+        }
+
+        let result = project::add_files(&project_file, library, &entries)
+            .and_then(|()| {
+                if testbenches.is_empty() {
+                    Ok(())
+                } else {
+                    project::add_testbenches(&project_file, &testbenches)
+                }
+            });
+        match result {
+            Ok(()) => {
+                let mut message = format!("Added {} file(s) to library {library}", entries.len());
+                if !testbenches.is_empty() {
+                    message.push_str(&format!(", and testbench(es) {}", testbenches.join(", ")));
+                }
+                self.session.note(&message, LogStyle::Note);
+                self.refresh_plan();
+            }
+            Err(error) => self.report_error(&error),
         }
     }
 
@@ -221,15 +299,33 @@ impl AppState {
     /// comments in project.toml, and works out the plan again.
     pub fn remove_file(&mut self, library: &str, path: &Path) {
         let Some(open) = &self.open else { return };
-        match project::remove_file(&open.project.file, library, path) {
+        let project_file = open.project.file.clone();
+        // Testbenches defined in this file go from the testbench list too.
+        let testbenches: Vec<String> = self
+            .planned_file(path)
+            .map(|file| {
+                file.units
+                    .iter()
+                    .filter(|unit| unit.kind == UnitKind::Entity)
+                    .filter(|unit| open.project.config.testbenches.iter().any(|tb| tb.top.eq_ignore_ascii_case(&unit.name)))
+                    .map(|unit| unit.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let result = project::remove_file(&project_file, library, path).and_then(|()| {
+            if testbenches.is_empty() {
+                Ok(())
+            } else {
+                project::remove_testbenches(&project_file, &testbenches)
+            }
+        });
+        match result {
             Ok(()) => {
-                self.session.note(
-                    &format!(
-                        "Removed {} from library {library} (the file is still on disk)",
-                        path.display()
-                    ),
-                    LogStyle::Note,
-                );
+                let mut message = format!("Removed {} from library {library} (the file is still on disk)", path.display());
+                if !testbenches.is_empty() {
+                    message.push_str(&format!(", and testbench(es) {}", testbenches.join(", ")));
+                }
+                self.session.note(&message, LogStyle::Note);
                 if self.selected_file.as_deref().is_some_and(|selected| same_file(selected, path)) {
                     self.selected_file = None;
                 }
@@ -289,8 +385,11 @@ impl AppState {
             .unwrap_or_default();
     }
 
-    /// The testbench chosen in the toolbar, if the project has any.
+    /// The testbench chosen in the toolbar, if there is one that can run.
     pub fn selected_testbench(&self) -> Option<&TestbenchConfig> {
+        if !self.runnable_testbenches().contains(&self.selected_testbench) {
+            return None;
+        }
         let open = self.open.as_ref()?;
         open.project.config.testbenches.get(self.selected_testbench)
     }
@@ -388,6 +487,13 @@ pub fn files_by_library<'a>(project: &'a Project, plan: &'a BuildPlan) -> Vec<(&
             (library.name.as_str(), files)
         })
         .collect()
+}
+
+/// How a file is written in project.toml: relative to the project folder
+/// if it's inside it, with `/` separators either way.
+fn project_entry(root: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    relative.to_string_lossy().replace('\\', "/")
 }
 
 /// True if two paths name the same project file, ignoring `/` vs `\`
@@ -505,6 +611,54 @@ mod tests {
         state.open_source(Path::new("src/no_such_file.vhd"));
         assert_eq!(state.tab, MainTab::Output);
         assert_eq!(state.session.log.last().unwrap().style, LogStyle::Error);
+    }
+
+    #[test]
+    fn testbenches_follow_their_files_out_and_back_in() {
+        let folder = copy_of_project("three_libs", "app_testbenches_follow_files");
+        let mut state = AppState::new(RecentProjects::default());
+        state.open_project(&folder);
+        assert_eq!(state.runnable_testbenches(), [0]);
+
+        state.remove_file("tb_lib", Path::new("tb/top_tb.vhd"));
+        let open = state.open.as_ref().unwrap();
+        assert!(open.project.config.testbenches.is_empty(), "removed with its file");
+        assert!(state.selected_testbench().is_none());
+        assert!(state.runnable_testbenches().is_empty());
+
+        state.add_files("tb_lib", &[folder.join("tb").join("top_tb.vhd")]);
+        let open = state.open.as_ref().unwrap();
+        let plan = open.plan.as_ref().unwrap();
+        assert_eq!(plan.files.len(), 6, "back in the project");
+        assert_eq!(open.project.config.testbenches[0].top, "top_tb", "and its testbench too");
+        assert_eq!(state.selected_testbench().unwrap().top, "top_tb");
+        let text = std::fs::read_to_string(folder.join("project.toml")).unwrap();
+        assert!(!text.contains("exclude"), "un-excluded, not listed twice:\n{text}");
+
+        // A new file in a folder no pattern covers is listed by name.
+        std::fs::create_dir_all(folder.join("extra")).unwrap();
+        std::fs::write(folder.join("extra").join("tb_extra.vhd"), "entity tb_extra is end;\n").unwrap();
+        state.add_files("tb_lib", &[folder.join("extra").join("tb_extra.vhd")]);
+        let open = state.open.as_ref().unwrap();
+        assert!(open.plan.as_ref().unwrap().files.iter().any(|f| same_file(&f.source.path, Path::new("extra/tb_extra.vhd"))));
+        assert_eq!(state.runnable_testbenches().len(), 2);
+
+        // A file can't be in two libraries.
+        state.add_files("design_lib", &[folder.join("extra").join("tb_extra.vhd")]);
+        assert_eq!(state.session.log.last().unwrap().style, LogStyle::Warning);
+    }
+
+    #[test]
+    fn a_testbench_whose_entity_is_gone_is_not_offered() {
+        let folder = copy_of_project("three_libs", "app_testbench_entity_gone");
+        let toml = std::fs::read_to_string(folder.join("project.toml")).unwrap();
+        std::fs::write(folder.join("project.toml"), format!("{toml}\n[[testbench]]\ntop = \"gone_tb\"\n")).unwrap();
+        let mut state = AppState::new(RecentProjects::default());
+        state.open_project(&folder);
+        assert_eq!(state.open.as_ref().unwrap().project.config.testbenches.len(), 2);
+        assert_eq!(state.runnable_testbenches(), [0]);
+        state.selected_testbench = 1;
+        assert!(state.selected_testbench().is_none(), "Run is not offered for it");
     }
 
     #[test]

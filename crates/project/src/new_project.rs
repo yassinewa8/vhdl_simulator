@@ -11,6 +11,14 @@ use crate::PROJECT_FILE_NAME;
 /// File patterns a new project starts with: every VHDL file in the folder.
 pub const DEFAULT_FILE_PATTERNS: [&str; 2] = ["**/*.vhd", "**/*.vhdl"];
 
+/// True if an entity's name says it's a testbench: `*_tb` or `tb_*`.
+/// (A naming rule rather than "has no ports", because the scanner doesn't
+/// read port lists; it's what most teams use anyway.)
+pub fn looks_like_testbench(entity: &str) -> bool {
+    let name = entity.to_lowercase();
+    name.ends_with("_tb") || name.starts_with("tb_")
+}
+
 /// Settings for a new project in `folder`: one library called `work`
 /// holding every VHDL file, and a testbench for every entity whose name
 /// looks like one (`*_tb` or `tb_*`). Doesn't write anything.
@@ -33,9 +41,8 @@ pub fn default_config_for_folder(folder: &Path) -> Result<ProjectConfig, Project
             continue;
         };
         for unit in scan(&String::from_utf8_lossy(&contents)).units {
-            let is_testbench_name = unit.name.ends_with("_tb") || unit.name.starts_with("tb_");
             let already_added = config.testbenches.iter().any(|tb| tb.top == unit.name);
-            if unit.kind == UnitKind::Entity && is_testbench_name && !already_added {
+            if unit.kind == UnitKind::Entity && looks_like_testbench(&unit.name) && !already_added {
                 config.testbenches.push(TestbenchConfig::new(&unit.name));
             }
         }

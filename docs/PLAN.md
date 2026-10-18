@@ -172,3 +172,10 @@ Append new decisions at the bottom: date, what was decided, and why.
 - **2026-10-11: VHDL highlighting is our own small tokenizer**
   (`project::highlight`), not syntect: no dependency, and syntect ships no
   VHDL grammar anyway.
+- **2026-10-19: Files can be added to the project** (right-click a library
+  -> Add files..., or Project -> Add files to library). An excluded file is
+  un-excluded; a file no pattern covers is added to `files` by name.
+- **2026-10-19: The testbench list follows the files.** Adding a file with
+  an entity named `*_tb`/`tb_*` adds a `[[testbench]]`; removing the file
+  removes it (with its settings, e.g. generics). The dropdown only offers
+  testbenches whose entity is in the project.
